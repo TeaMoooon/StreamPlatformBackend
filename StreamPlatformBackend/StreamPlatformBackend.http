@@ -1,0 +1,6 @@
+@StreamPlatformBackend_HostAddress = http://localhost:5156
+
+GET {{StreamPlatformBackend_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
