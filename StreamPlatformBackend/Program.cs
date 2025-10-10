@@ -2,6 +2,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using Npgsql;
 using StreamPlatformBackend.Data;
 using StreamPlatformBackend.Services;
 using System.Text;
@@ -51,10 +52,7 @@ builder.Services.AddSwaggerGen(options =>
 
 // Добавляем БД
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")));
-
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseInMemoryDatabase("TestDb"));
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 // Регистрация сервисов
 builder.Services.AddScoped<IPasswordHasherService, PasswordHasherService>();
@@ -107,6 +105,60 @@ if (app.Environment.IsDevelopment())
 {
     app.UseDeveloperExceptionPage();
 }
+
+
+using (var scope = app.Services.CreateScope())
+{
+    var services = scope.ServiceProvider;
+    try
+    {
+        var context = services.GetRequiredService<AppDbContext>();
+
+        // Проверяем существование базы данных и создаем если нет
+        context.Database.EnsureCreated();
+
+        // Или используйте миграции (рекомендуется)
+        // context.Database.Migrate();
+
+        Console.WriteLine("Database created successfully");
+    }
+    catch (Exception ex)
+    {
+        var logger = services.GetRequiredService<ILogger<Program>>();
+        logger.LogError(ex, "An error occurred while creating the database");
+
+        // Альтернативный способ: создаем базу через прямое подключение
+        CreateDatabaseIfNotExists(builder.Configuration);
+    }
+}
+
+// Метод для создания базы данных
+static void CreateDatabaseIfNotExists(IConfiguration configuration)
+{
+    var connectionString = configuration.GetConnectionString("DefaultConnection");
+    var databaseName = "StreamDB";
+
+    // Создаем строку подключения к postgres (системная БД)
+    var masterConnectionString = connectionString.Replace(databaseName, "postgres");
+
+    using var connection = new NpgsqlConnection(masterConnectionString);
+    connection.Open();
+
+    // Проверяем существование базы данных
+    using var command = new NpgsqlCommand(
+        $"SELECT 1 FROM pg_database WHERE datname = '{databaseName}'", connection);
+    var exists = command.ExecuteScalar() != null;
+
+    if (!exists)
+    {
+        using var createCommand = new NpgsqlCommand(
+            $"CREATE DATABASE \"{databaseName}\"", connection);
+        createCommand.ExecuteNonQuery();
+        Console.WriteLine($"Database {databaseName} created successfully");
+    }
+}
+
+
 
 app.UseCors("AllowAll");
 app.UseHttpsRedirection();

@@ -22,36 +22,25 @@ namespace StreamPlatformBackend.Data
         {
             base.OnModelCreating(modelBuilder);
 
-            // Уникальные индексы для UserModel
-            modelBuilder.Entity<UserModel>()
-                .HasIndex(u => u.Email)
-                .IsUnique();
-
-            modelBuilder.Entity<UserModel>()
-                .HasIndex(u => u.Nickname)
-                .IsUnique();
-
             // Составной ключ для подписок (нельзя дважды подписаться на одного и того же)
-            modelBuilder.Entity<SubscriptionModel>()
-                .HasKey(s => new { s.SubscriberId, s.TargetUserId });
+            modelBuilder.Entity<SubscriptionModel>().HasKey(s => new { s.SubscriberId, s.TargetUserId });
 
-            // Проверка на самоподписку
             modelBuilder.Entity<SubscriptionModel>()
-                .HasCheckConstraint("CK_Subscription_NotSelf", "[SubscriberId] != [TargetUserId]");
+                .HasCheckConstraint("CK_Subscription_NotSelf", "\"SubscriberId\" != \"TargetUserId\"");
 
-            // 🔗 ЯВНОЕ ОПИСАНИЕ ОТНОШЕНИЙ SubscriptionModel -> UserModel
+            // 🔥 ОБНОВЛЕННЫЕ ОТНОШЕНИЯ - используйте навигационные свойства
             modelBuilder.Entity<SubscriptionModel>()
                 .HasOne(s => s.Subscriber)
-                .WithMany() // или .WithMany(u => u.Subscriptions), если есть навигация в UserModel
+                .WithMany(u => u.Subscriptions) // Ссылаемся на навигационное свойство
                 .HasForeignKey(s => s.SubscriberId)
                 .OnDelete(DeleteBehavior.Restrict);
 
             modelBuilder.Entity<SubscriptionModel>()
                 .HasOne(s => s.TargetUser)
-                .WithMany() // или .WithMany(u => u.Followers)
+                .WithMany(u => u.Subscribers) // Ссылаемся на навигационное свойство
                 .HasForeignKey(s => s.TargetUserId)
                 .OnDelete(DeleteBehavior.Restrict);
-        }
 
+        }
     }
 }

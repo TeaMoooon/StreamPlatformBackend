@@ -16,11 +16,11 @@ namespace StreamPlatformBackend.DTO.UserDTO
         [MinLength(6)]
         public string Password { get; set; } = string.Empty;
 
-        [Required]
+        /*[Required]
         public DateOnly BirthDate { get; set; }
 
         [Required]
-        public string? Gender { get; set; }
+        public string? Gender { get; set; }*/
 
     }
 }

@@ -1,10 +1,10 @@
 ﻿namespace StreamPlatformBackend.Models.Enums
 {
-    public enum UserRole
+    public static class UserRole
     {
-        User,
-        Moderator,
-        Admin,
-        SuperAdmin
+        public const string User = "User";
+        public const string Moderator = "Moderator";
+        public const string Admin = "Admin";
+        public const string SuperAdmin = "SuperAdmin";
     }
 }

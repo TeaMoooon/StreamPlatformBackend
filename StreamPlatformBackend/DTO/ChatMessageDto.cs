@@ -13,6 +13,5 @@ namespace StreamPlatformBackend.DTO
         public MessageType MessageType { get; set; }
         public decimal DonationAmount { get; set; }
         public string MessageColor { get; set; } = "#FFFFFF";
-        public StreamerLeague UserLeague { get; set; }
     }
 }

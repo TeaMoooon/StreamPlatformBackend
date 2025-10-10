@@ -1,12 +1,12 @@
 ﻿namespace StreamPlatformBackend.Models.Enums
 {
-    public enum StreamerLeague
+    public static class StreamerLeagues
     {
-        None,
-        Bronze,
-        Silver,
-        Gold,
-        Platinum,
-        Diamond
+        public const string None = "None";
+        public const string Bronze = "Bronze";
+        public const string Silver = "Silver";
+        public const string Gold = "Gold";
+        public const string Platinum = "Platinum";
+        public const string Diamond = "Diamond";
     }
 }

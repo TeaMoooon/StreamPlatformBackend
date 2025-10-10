@@ -44,7 +44,7 @@ namespace StreamPlatformBackend.Models.User
 
         // Невидимые данные
         [Required]
-        public UserRole Role { get; set; } = UserRole.User;
+        public string Role { get; set; } = UserRole.User;
 
         [Required]
         [JsonIgnore]
@@ -71,7 +71,7 @@ namespace StreamPlatformBackend.Models.User
 
         public virtual ICollection<UserVideoLinkModel> VideoLinks { get; set; } = new List<UserVideoLinkModel>();
 
-        public StreamerLeague StreamersLeague { get; set; } = StreamerLeague.None;
+        public string StreamersLeague { get; set; } = StreamerLeagues.None;
 
         public virtual StreamModel? Stream { get; set; } = null;
 
