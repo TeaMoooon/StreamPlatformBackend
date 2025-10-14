@@ -11,9 +11,6 @@ namespace StreamPlatformBackend.Models.User
         [Key]
         public int Id { get; set; }
 
-
-
-
         //Пользовательские данные
         [Required]
         [EmailAddress]

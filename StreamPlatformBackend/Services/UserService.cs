@@ -16,6 +16,9 @@ namespace StreamPlatformBackend.Services
         Task<UserModel?> GetUserByEmailAsync(string email);
         Task<UserModel?> GetUserByIdAsync(int id);
         Task UpdateUserProfileAsync(int userId, UserUpdateDataDto userUpdateDataDto);
+        Task<string> RegenerateStreamKeyAsync(int userId);
+        Task<bool> StreamKeyExistsAsync(string streamKey);
+        Task<UserModel> GetUserByStreamKeyAsync(string streamKey);
     }
 
     public class UserService : IUserService
@@ -129,7 +132,81 @@ namespace StreamPlatformBackend.Services
         {
             return $"sk_{Guid.NewGuid():N}";
         }
+
+
         //Добавить сброс ключа 
+        public async Task<string> RegenerateStreamKeyAsync(int userId)
+        {
+            using var transaction = await _context.Database.BeginTransactionAsync();
+
+            try
+            {
+                _logger.LogInformation("Начало пересоздания StreamKey для пользователя: {UserId}", userId);
+
+                var user = await _context.Users.FindAsync(userId);
+                if (user == null)
+                {
+                    _logger.LogWarning("Пользователь с ID {UserId} не найден", userId);
+                    throw new ArgumentException("Пользователь не найден");
+                }
+
+                // Автоматически делаем пользователя стримером при генерации ключа
+                if (!user.IsStreamer)
+                {
+                    user.IsStreamer = true;
+                    _logger.LogInformation("Пользователь {UserId} автоматически стал стримером при генерации StreamKey", userId);
+                }
+
+                string newStreamKey;
+                int attempts = 0;
+                const int maxAttempts = 5;
+
+                // Генерируем уникальный ключ
+                do
+                {
+                    newStreamKey = GenerateStreamKey();
+                    attempts++;
+
+                    if (attempts > maxAttempts)
+                    {
+                        _logger.LogError("Не удалось сгенерировать уникальный StreamKey после {Attempts} попыток для пользователя {UserId}",
+                            maxAttempts, userId);
+                        throw new ApplicationException("Не удалось сгенерировать уникальный ключ трансляции");
+                    }
+                }
+                while (await StreamKeyExistsAsync(newStreamKey));
+
+                // Сохраняем новый ключ
+                var oldStreamKey = user.StreamKey;
+                user.StreamKey = newStreamKey;
+
+                await _context.SaveChangesAsync();
+                await transaction.CommitAsync();
+
+                _logger.LogInformation("StreamKey успешно пересоздан для пользователя {UserId}", userId);
+
+                return newStreamKey;
+            }
+            catch (Exception)
+            {
+                await transaction.RollbackAsync();
+                throw;
+            }
+        }
+
+        public async Task<bool> StreamKeyExistsAsync(string streamKey)
+        {
+            return await _context.Users
+                .AnyAsync(u => u.StreamKey == streamKey);
+        }
+
+        public async Task<UserModel> GetUserByStreamKeyAsync(string streamKey)
+        {
+            return await _context.Users
+                .FirstOrDefaultAsync(u => u.StreamKey == streamKey);
+        }
+
+
 
         public async Task<bool> ValidateUserCredentialsAsync(string email, string password)
         {
@@ -169,45 +246,6 @@ namespace StreamPlatformBackend.Services
                 return false;
             }
         }
-
-        /*public async Task UpdateUserProfileAsync(int userId, UserUpdateDataDto userUpdateDataDto)
-        {
-            try
-            {
-                var user = await _context.Users.FindAsync(userId);
-                if (user == null)
-                {
-                    throw new ArgumentException("Пользователь не найден");
-                }
-
-                // Проверяем, не занят ли новый email другим пользователем
-                if (user.Email != userUpdateDataDto.Email &&
-                    await EmailExistsAsync(userUpdateDataDto.Email))
-                {
-                    throw new ArgumentException("Email уже используется");
-                }
-
-                // Проверяем, не занят ли новый nickname другим пользователем
-                if (user.Nickname != userUpdateDataDto.Nickname &&
-                    await NicknameExistsAsync(userUpdateDataDto.Nickname))
-                {
-                    throw new ArgumentException("Никнейм уже используется");
-                }
-
-                user.Email = userUpdateDataDto.Email;
-                user.Nickname = userUpdateDataDto.Nickname;
-                user.ProfileDescription = userUpdateDataDto.ProfileDescription;
-                user.ProfileImage = userUpdateDataDto.ProfileImage;
-
-                await _context.SaveChangesAsync();
-                _logger.LogInformation("Профиль пользователя {UserId} обновлен", userId);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Ошибка при обновлении профиля пользователя {UserId}", userId);
-                throw;
-            }
-        }*/
 
         public async Task UpdateUserProfileAsync(int userId, UserUpdateDataDto userUpdateDataDto)
         {

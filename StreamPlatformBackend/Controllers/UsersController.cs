@@ -56,46 +56,7 @@ namespace StreamPlatformBackend.Controllers
         }
 
 
-        //[HttpPost("login")]
-        /*public async Task<IActionResult> Login([FromBody] UserLoginDto loginDto)
-        {
-            try
-            {
-
-
-                if (!ModelState.IsValid)
-                {
-                    return BadRequest(ModelState);
-                }
-
-                var isValid = await _userService.ValidateUserCredentialsAsync(
-                    loginDto.Email, loginDto.Password);
-
-                if (!isValid)
-                {
-                    return Unauthorized(new { message = "Неверный email или пароль" });
-                }
-
-                var user = await _userService.GetUserByEmailAsync(loginDto.Email);
-
-                if (user == null)
-                {
-                    return Unauthorized(new { message = "Неверный email или пароль" });
-                }
-
-                // Здесь будет логика генерации JWT токена
-                return Ok(new
-                {
-                    message = "Вход выполнен успешно",
-                    user = new { user.Id, user.Email, user.Nickname }
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Ошибка при входе пользователя {Email}", loginDto.Email);
-                return StatusCode(500, new { message = "Внутренняя ошибка сервера" });
-            }
-        }*/
+        
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] UserLoginDto loginDto)
         {
@@ -209,7 +170,68 @@ namespace StreamPlatformBackend.Controllers
 
         //[HttpPatch]
 
+        [Authorize]
+        [HttpPost("stream-key/regenerate")]
+        public async Task<IActionResult> RegenerateStreamKey()
+        {
+            try
+            {
+                var userId = GetCurrentUserId();
+                var newStreamKey = await _userService.RegenerateStreamKeyAsync(userId);
 
+                return Ok(new
+                {
+                    message = "StreamKey успешно пересоздан",
+                    streamKey = newStreamKey
+                });
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new { message = ex.Message });
+            }
+            catch (ApplicationException ex)
+            {
+                _logger.LogError(ex, "Ошибка при пересоздании StreamKey для пользователя {UserId}", GetCurrentUserId());
+                return StatusCode(500, new { message = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Неожиданная ошибка при пересоздании StreamKey для пользователя {UserId}", GetCurrentUserId());
+                return StatusCode(500, new { message = "Внутренняя ошибка сервера" });
+            }
+        }
+
+        [Authorize]
+        [HttpGet("stream-key")]
+        public async Task<IActionResult> GetUserStreamKey()
+        {
+            try
+            {
+                var userId = GetCurrentUserId();
+                var user = await _userService.GetUserByIdAsync(userId);
+
+                if (user == null)
+                {
+                    return NotFound(new { message = "Пользователь не найден" });
+                }
+
+                return Ok(new
+                {
+                    streamKey = user.StreamKey,
+                    streamServerUrl = user.StreamServerUrl,
+                    isStreamer = user.IsStreamer
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Ошибка при получении StreamKey для пользователя {UserId}", GetCurrentUserId());
+                return StatusCode(500, new { message = "Внутренняя ошибка сервера" });
+            }
+        }
 
         private int GetCurrentUserId()
         {
