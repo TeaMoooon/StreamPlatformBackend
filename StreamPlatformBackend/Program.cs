@@ -63,16 +63,17 @@ builder.Services.AddScoped<IJwtService, JwtService>();
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
+        var  secretKey = builder.Configuration["Jwt:SecretKey"] ?? "fallback-secret-key-minimum-32-chars";
+
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
-            ValidIssuer = "StreamPlatformBackend",
+            ValidIssuer = builder.Configuration["Jwt:Issuer"] ?? "StreamPlatformBackend",
             ValidateAudience = true,
-            ValidAudience = "StreamPlatformUsers",
+            ValidAudience = builder.Configuration["Jwt:Audience"] ?? "StreamPlatformUsers",
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
-            IssuerSigningKey = new SymmetricSecurityKey(
-                Encoding.UTF8.GetBytes("your-super-secret-key-minimum-32-characters-long-here")),
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey)),
             ClockSkew = TimeSpan.Zero
         };
     });
@@ -159,6 +160,8 @@ static void CreateDatabaseIfNotExists(IConfiguration configuration)
 }
 
 
+
+app.UseRouting();
 
 app.UseCors("AllowAll");
 app.UseHttpsRedirection();
