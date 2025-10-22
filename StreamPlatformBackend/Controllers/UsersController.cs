@@ -358,9 +358,13 @@ namespace StreamPlatformBackend.Controllers
 
 
 
-        [HttpPost("{subscriberId}/subscribe/{targetUserId}")]
-        public async Task<ActionResult> SubscribeToUser(int subscriberId, int targetUserId)
+        [HttpPost("subscribe/{targetUserId}")]
+        [Authorize] // ← Требуем авторизацию
+        public async Task<ActionResult> SubscribeToUser(int targetUserId)
         {
+            // Получаем ID текущего авторизованного пользователя из токена
+            var subscriberId = GetCurrentUserIdFromToken();
+
             try
             {
                 var result = await _userService.SubscribeToUserAsync(subscriberId, targetUserId);
@@ -380,9 +384,12 @@ namespace StreamPlatformBackend.Controllers
             }
         }
 
-        [HttpDelete("{subscriberId}/subscribe/{targetUserId}")]
-        public async Task<ActionResult> UnsubscribeFromUser(int subscriberId, int targetUserId)
+        [HttpDelete("subscribe/{targetUserId}")]
+        [Authorize] // ← Требуем авторизацию
+        public async Task<ActionResult> UnsubscribeFromUser(int targetUserId)
         {
+            var subscriberId = GetCurrentUserIdFromToken();
+
             try
             {
                 var result = await _userService.UnsubscribeFromUserAsync(subscriberId, targetUserId);
@@ -402,20 +409,34 @@ namespace StreamPlatformBackend.Controllers
             }
         }
 
-        [HttpGet("{subscriberId}/is-subscribed/{targetUserId}")]
-        public async Task<ActionResult<bool>> IsSubscribed(int subscriberId, int targetUserId)
+        [HttpGet("is-subscribed/{targetUserId}")]
+        [Authorize]
+        public async Task<ActionResult<bool>> IsSubscribed(int targetUserId)
         {
+            var currentUserId = GetCurrentUserIdFromToken();
+
             try
             {
-                var isSubscribed = await _userService.IsSubscribedAsync(subscriberId, targetUserId);
+                var isSubscribed = await _userService.IsSubscribedAsync(currentUserId, targetUserId);
                 return Ok(isSubscribed);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Ошибка при проверке подписки {SubscriberId} на {TargetUserId}",
-                    subscriberId, targetUserId);
+                _logger.LogError(ex, "Ошибка при проверке подписки {CurrentUserId} на {TargetUserId}",
+                    currentUserId, targetUserId);
                 return StatusCode(500, "Произошла ошибка при проверке подписки");
             }
+        }
+
+        // Метод для получения ID текущего пользователя из JWT токена
+        private int GetCurrentUserIdFromToken()
+        {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(userIdClaim) || !int.TryParse(userIdClaim, out var userId))
+            {
+                throw new UnauthorizedAccessException("Неверный токен авторизации");
+            }
+            return userId;
         }
 
     }
