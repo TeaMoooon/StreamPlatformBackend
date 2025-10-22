@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using StreamPlatformBackend.Data;
@@ -11,9 +12,11 @@ using StreamPlatformBackend.Data;
 namespace StreamPlatformBackend.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251018212023_AddThumbnailUrlToUser")]
+    partial class AddThumbnailUrlToUser
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -63,19 +66,20 @@ namespace StreamPlatformBackend.Migrations
                     b.Property<DateTime?>("EndedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<string>("PreviewlUrl")
+                    b.Property<string>("HlsUrl")
+                        .IsRequired()
                         .HasColumnType("text");
 
                     b.Property<DateTime?>("StartedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<string>("StreamName")
-                        .IsRequired()
-                        .HasColumnType("text");
-
                     b.PrimitiveCollection<string[]>("Tags")
                         .IsRequired()
                         .HasColumnType("text[]");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasColumnType("text");
 
                     b.Property<int>("TotalViews")
                         .HasColumnType("integer");
@@ -142,21 +146,8 @@ namespace StreamPlatformBackend.Migrations
                     b.Property<DateTime?>("LastAuthDate")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<int?>("LastCategoryId")
-                        .HasColumnType("integer");
-
                     b.Property<DateTime?>("LastOnlineDate")
                         .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("LastPreviewlUrl")
-                        .HasColumnType("text");
-
-                    b.Property<string>("LastStreamName")
-                        .HasColumnType("text");
-
-                    b.PrimitiveCollection<string[]>("LastTags")
-                        .IsRequired()
-                        .HasColumnType("text[]");
 
                     b.Property<string>("Nickname")
                         .IsRequired()
@@ -196,9 +187,38 @@ namespace StreamPlatformBackend.Migrations
                         .IsRequired()
                         .HasColumnType("text");
 
+                    b.Property<string>("ThumbnailUrl")
+                        .HasColumnType("text");
+
                     b.HasKey("Id");
 
                     b.ToTable("Users");
+                });
+
+            modelBuilder.Entity("StreamPlatformBackend.Models.User.UserVideoLinkModel", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("AddedDate")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("VideoUrl")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("UserVideoLinks");
                 });
 
             modelBuilder.Entity("StreamPlatformBackend.Models.Stream.StreamModel", b =>
@@ -239,6 +259,17 @@ namespace StreamPlatformBackend.Migrations
                     b.Navigation("TargetUser");
                 });
 
+            modelBuilder.Entity("StreamPlatformBackend.Models.User.UserVideoLinkModel", b =>
+                {
+                    b.HasOne("StreamPlatformBackend.Models.User.UserModel", "User")
+                        .WithMany("VideoLinks")
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
+                });
+
             modelBuilder.Entity("StreamPlatformBackend.Models.Stream.StreamCategory", b =>
                 {
                     b.Navigation("Streams");
@@ -251,6 +282,8 @@ namespace StreamPlatformBackend.Migrations
                     b.Navigation("Subscribers");
 
                     b.Navigation("Subscriptions");
+
+                    b.Navigation("VideoLinks");
                 });
 #pragma warning restore 612, 618
         }

@@ -1,10 +1,10 @@
-﻿namespace StreamPlatformBackend.DTO.UserDTO
+﻿using StreamPlatformBackend.Models.Stream;
+
+namespace StreamPlatformBackend.DTO.UserDTO
 {
-    public class UserProfileDto
+    public class UserPublicProfileDto
     {
         public int Id { get; set; }
-
-        public string Email { get; set; } = string.Empty;
 
         public string Nickname { get; set; } = string.Empty;
 
@@ -18,7 +18,7 @@
 
         public bool IsOnline { get; set; }
 
-        public int CashBalance { get; set; } = 0;
+        public virtual StreamModel? CurrentStream { get; set; }
 
     }
 }

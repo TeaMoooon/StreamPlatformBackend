@@ -3,56 +3,50 @@ using Microsoft.EntityFrameworkCore;
 using StreamPlatformBackend.Data;
 using StreamPlatformBackend.DTO;
 using StreamPlatformBackend.Models.Stream;
+using StreamPlatformBackend.Services;
 
 namespace StreamPlatformBackend.Controllers;
 
 [ApiController]
-[Route("api/[controller]")]
+[Route("api/stream")]
 public class StreamController : ControllerBase
 {
-    private readonly AppDbContext _db;
+    private readonly IStreamService _streamService;
 
-    public StreamController(AppDbContext db)
+    public StreamController(IStreamService streamService)
     {
-        _db = db;
+        _streamService = streamService;
     }
 
-    [HttpGet]
-    public async Task<IActionResult> GetStreams()
+    [HttpPost("start")]
+    public async Task<IActionResult> StartStream([FromBody] StartStreamRequest request)
     {
-        var streams = await _db.Streams
-            .Include(s => s.User)
-            .Select(s => new StreamDto
+        try
+        {
+            var stream = await _streamService.StartStreamAsync(request.UserId, request.StreamKey);
+            return Ok(new
             {
-                Id = s.Id,
-                StreamName = s.StreamName,
-                IsLive = s.IsLive,
-                HlsUrl = s.HlsUrl,
-                UserNickname = s.User.Nickname
-            })
-            .ToListAsync();
-
-        return Ok(streams);
+                success = true,
+                streamId = stream.Id,
+                streamName = stream.StreamName
+            });
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            return Unauthorized(new { success = false, error = ex.Message });
+        }
     }
 
-    [HttpPost]
-    public async Task<IActionResult> CreateStream([FromBody] StreamModel stream)  // Явное указание Models.Stream
+    [HttpPost("end/{streamId}")]
+    public async Task<IActionResult> EndStream(int streamId)
     {
-        _db.Streams.Add(stream);
-        await _db.SaveChangesAsync();
-        return Ok(stream);
+        await _streamService.EndStreamAsync(streamId);
+        return Ok(new { success = true });
     }
+}
 
-    [HttpPut("{id}")]
-    public async Task<IActionResult> UpdateStream(int id, [FromBody] StreamModel stream)  // Явное указание Models.Stream
-    {
-        var existingStream = await _db.Streams.FindAsync(id);
-        if (existingStream == null) return NotFound();
-
-        existingStream.IsLive = stream.IsLive;
-        existingStream.HlsUrl = stream.HlsUrl;
-        await _db.SaveChangesAsync();
-
-        return Ok(existingStream);
-    }
+public class StartStreamRequest
+{
+    public int UserId { get; set; }
+    public string StreamKey { get; set; } = string.Empty;
 }

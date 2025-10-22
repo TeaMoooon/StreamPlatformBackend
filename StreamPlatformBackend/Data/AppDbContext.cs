@@ -12,11 +12,7 @@ namespace StreamPlatformBackend.Data
 
         public DbSet<UserModel> Users { get; set; }
         public DbSet<SubscriptionModel> Subscriptions { get; set; }
-        public DbSet<UserVideoLinkModel> UserVideoLinks { get; set; }
         public DbSet<StreamModel> Streams { get; set; }
-        public DbSet<ChatMessageModel> ChatMessages { get; set; }
-        public DbSet<ChatModeratorModel> ChatModerators { get; set; }
-        public DbSet<BannedChatUserModel> BannedChatUsers { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -25,8 +21,9 @@ namespace StreamPlatformBackend.Data
             // Составной ключ для подписок (нельзя дважды подписаться на одного и того же)
             modelBuilder.Entity<SubscriptionModel>().HasKey(s => new { s.SubscriberId, s.TargetUserId });
 
+
             modelBuilder.Entity<SubscriptionModel>()
-                .HasCheckConstraint("CK_Subscription_NotSelf", "\"SubscriberId\" != \"TargetUserId\"");
+                .ToTable(t => t.HasCheckConstraint("CK_Subscription_NotSelf","\"SubscriberId\" != \"TargetUserId\""));
 
             // 🔥 ОБНОВЛЕННЫЕ ОТНОШЕНИЯ - используйте навигационные свойства
             modelBuilder.Entity<SubscriptionModel>()
@@ -41,6 +38,7 @@ namespace StreamPlatformBackend.Data
                 .HasForeignKey(s => s.TargetUserId)
                 .OnDelete(DeleteBehavior.Restrict);
 
+            modelBuilder.Entity<SubscriptionModel>().HasKey(s => new { s.SubscriberId, s.TargetUserId });
         }
     }
 }

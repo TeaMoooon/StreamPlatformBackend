@@ -34,7 +34,6 @@ namespace StreamPlatformBackend.Models.User
 
         public DateTime? LastOnlineDate { get; set; } = null;
 
-        public bool IsOnline { get; set; } = false;
 
 
 
@@ -46,7 +45,7 @@ namespace StreamPlatformBackend.Models.User
         [Required]
         [JsonIgnore]
         public string PasswordHash { get; set; } = string.Empty;
-  
+
         public DateTime? LastAuthDate { get; set; } = null;
 
 
@@ -55,30 +54,76 @@ namespace StreamPlatformBackend.Models.User
         public bool EmailNotifications { get; set; } = false;
 
 
-        public int TotalSubscribers { get; set; } = 0;
-
-        public int TotalPremiumSubscribers { get; set; } = 0;
-
-
         [JsonIgnore]
         public virtual ICollection<SubscriptionModel> Subscriptions { get; set; } = new List<SubscriptionModel>();
 
         [JsonIgnore]
         public virtual ICollection<SubscriptionModel> Subscribers { get; set; } = new List<SubscriptionModel>();
 
-        public virtual ICollection<UserVideoLinkModel> VideoLinks { get; set; } = new List<UserVideoLinkModel>();
+        
 
         public string StreamersLeague { get; set; } = StreamerLeagues.None;
 
-        public virtual StreamModel? Stream { get; set; } = null;
 
 
-        public bool IsStreamer { get; set; } = false;
+        /*Дополнительные полезные поля:
+
+        DateTime? BirthDate — для проверки возраста.
+
+        string Country / string TimeZoneId — для локализации и отображения времени.
+
+        bool IsBanned и DateTime? BanExpires — для модерации.
+
+        string? StripeCustomerId — для интеграции с платежной системой.
+
+        // Для модерации
+        public bool IsBanned { get; set; } = false;
+        public DateTime? BanExpires { get; set; } = null;
+        public string? BanReason { get; set; }
+    
+        // Для аналитики
+        public int TotalViewCount { get; set; } = 0;
+        public int FollowerCount { get; set; } = 0;
+        
+        // Для платежей
+        public string? StripeCustomerId { get; set; }
+        public string? PayPalEmail { get; set; }
+        
+        // Для локализации
+        public string TimeZoneId { get; set; } = "UTC";
+        public string Language { get; set; } = "en";
+        
+        // Для безопасности
+        public bool TwoFactorEnabled { get; set; } = false;
+
+
+        // Настройки
+        public bool EmailNotifications { get; set; } = false;
+        public bool IsEmailVerified { get; set; } = false; // Добавлено
+        public string? EmailVerificationToken { get; set; } // Добавлено
+
+
+            */
+
+
+
+
+
+        public bool IsOnline { get; set; } = false;
 
         [JsonIgnore]
         public string StreamKey { get; set; } = string.Empty;
 
-        public string StreamServerUrl { get; set; } = "rtmp://your-server.com/live";
+        public string StreamServerUrl { get; set; } = "rtmp://your-server.com/live"; //под вопросом
+
+        public virtual StreamModel? CurrentStream { get; set; } = null;
+
+        public string? LastPreviewlUrl { get; set; } //превью стрима
+        public string? LastStreamName { get; set; }
+
+        public int? LastCategoryId { get; set; }
+        public string[] LastTags { get; set; } = Array.Empty<string>();
+
 
     }
 }

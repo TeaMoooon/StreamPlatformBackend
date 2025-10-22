@@ -7,42 +7,47 @@ namespace StreamPlatformBackend.Models.Stream
 {
     public class StreamModel
     {
+
         [Key]
         public int Id { get; set; }
 
         [Required]
-        [StringLength(100)]
-        public string StreamName { get; set; } = string.Empty;
-
-        [Required]
-        public string StreamKey { get; set; } = string.Empty;
-
-        public bool IsLive { get; set; }
-
-        [Url]
-        public string HlsUrl { get; set; } = string.Empty;
-
-        [Required]
         public int UserId { get; set; }
 
-        [ForeignKey("UserId")]
-        public virtual UserModel User { get; set; } = null!;
+        [JsonIgnore]
+        public virtual UserModel User { get; set; }
 
+        // Данные о текущем стриме
+        public string StreamName { get; set; } = string.Empty;
+
+        public int CategoryId { get; set; }
+        [ForeignKey("CategoryId")]
+        public StreamCategory Category { get; set; }
+
+        public string[] Tags { get; set; } = Array.Empty<string>();
+
+        public string? PreviewlUrl { get; set; }
+
+        // Статистика просмотров
+        public int TotalViews { get; set; } = 0;
+
+        // Временные метки
         public DateTime? StartedAt { get; set; }
         public DateTime? EndedAt { get; set; }
 
-        [JsonIgnore]
-        public virtual ICollection<ChatMessageModel> ChatMessages { get; set; } = new List<ChatMessageModel>();
+        //public bool AllowClipCreation { get; set; } = true; //может быть на будущее
 
-        [JsonIgnore]
-        public virtual ICollection<ChatModeratorModel> Moderators { get; set; } = new List<ChatModeratorModel>();
+        // public virtual ICollection<StreamChatMessageModel> ChatMessages { get; set; } //хз как чат этот делать
 
-        [JsonIgnore]
-        public virtual ICollection<BannedChatUserModel> BannedUsers { get; set; } = new List<BannedChatUserModel>();
-
+        /*
+         * 
+         * Вот надо подумать тут или не тут
         public bool IsChatEnabled { get; set; } = true;
         public bool IsSubOnlyChat { get; set; } = false;
         public int SlowModeInterval { get; set; } = 0;
         public bool EmoteOnlyMode { get; set; } = false;
+        */
+        
+
     }
 }

@@ -15,10 +15,10 @@ namespace StreamPlatformBackend.Services
         Task<bool> ValidateUserCredentialsAsync(string email, string password);
         Task<UserModel?> GetUserByEmailAsync(string email);
         Task<UserModel?> GetUserByIdAsync(int id);
+        Task<UserModel?> GetUserByNameAsync(string name);
         Task UpdateUserProfileAsync(int userId, UserUpdateDataDto userUpdateDataDto);
         Task<string> RegenerateStreamKeyAsync(int userId);
         Task<bool> StreamKeyExistsAsync(string streamKey);
-        Task<UserModel> GetUserByStreamKeyAsync(string streamKey);
     }
 
     public class UserService : IUserService
@@ -38,14 +38,14 @@ namespace StreamPlatformBackend.Services
         {
             return await _context.Users
                 .AsNoTracking()
-                .AnyAsync(u => u.Email == email);
+                .AnyAsync(u => u.Email.ToLower() == email.ToLower());
         }
 
         public async Task<bool> NicknameExistsAsync(string nickname)
         {
             return await _context.Users
                 .AsNoTracking()
-                .AnyAsync(u => u.Nickname == nickname);
+                .AnyAsync(u => u.Nickname.ToLower() == nickname.ToLower());
         }
 
         public async Task<UserModel?> GetUserByEmailAsync(string email)
@@ -60,6 +60,13 @@ namespace StreamPlatformBackend.Services
             return await _context.Users
                 .AsNoTracking()
                 .FirstOrDefaultAsync(u => u.Id == id);
+        }
+
+        public async Task<UserModel?> GetUserByNameAsync(string name)
+        {
+            return await _context.Users
+                .AsNoTracking()
+                .FirstOrDefaultAsync(u => u.Nickname.ToLower() == name.ToLower());
         }
 
         public async Task<UserModel> CreateUserAsync(UserCreateDto userCreateDto)
@@ -90,15 +97,19 @@ namespace StreamPlatformBackend.Services
                 var user = new UserModel
                 {
                     Email = userCreateDto.Email,
-                    Nickname = userCreateDto.Nickname,
+                    Nickname = userCreateDto.Nickname.ToLower(),
                     PasswordHash = passwordHash,
 
-                    StreamKey = GenerateStreamKey(),
+                    //StreamKey = GenerateStreamKey(),
                     StreamServerUrl = "rtmp://your-server.com/live"
                 };
 
                 await _context.Users.AddAsync(user);
                 await _context.SaveChangesAsync();
+
+                user.StreamKey = GenerateStreamKey(user.Id);
+                await _context.SaveChangesAsync();
+
                 await transaction.CommitAsync();
 
                 _logger.LogInformation("Пользователь успешно создан: {Email} (ID: {UserId})",
@@ -128,9 +139,9 @@ namespace StreamPlatformBackend.Services
             }
         }
 
-        private static string GenerateStreamKey()
+        private static string GenerateStreamKey(int userId)
         {
-            return $"sk_{Guid.NewGuid():N}";
+            return $"live_{userId}_{Guid.NewGuid():N}";
         }
 
 
@@ -150,13 +161,6 @@ namespace StreamPlatformBackend.Services
                     throw new ArgumentException("Пользователь не найден");
                 }
 
-                // Автоматически делаем пользователя стримером при генерации ключа
-                if (!user.IsStreamer)
-                {
-                    user.IsStreamer = true;
-                    _logger.LogInformation("Пользователь {UserId} автоматически стал стримером при генерации StreamKey", userId);
-                }
-
                 string newStreamKey;
                 int attempts = 0;
                 const int maxAttempts = 5;
@@ -164,7 +168,7 @@ namespace StreamPlatformBackend.Services
                 // Генерируем уникальный ключ
                 do
                 {
-                    newStreamKey = GenerateStreamKey();
+                    newStreamKey = GenerateStreamKey(userId);
                     attempts++;
 
                     if (attempts > maxAttempts)
@@ -198,12 +202,6 @@ namespace StreamPlatformBackend.Services
         {
             return await _context.Users
                 .AnyAsync(u => u.StreamKey == streamKey);
-        }
-
-        public async Task<UserModel> GetUserByStreamKeyAsync(string streamKey)
-        {
-            return await _context.Users
-                .FirstOrDefaultAsync(u => u.StreamKey == streamKey);
         }
 
 

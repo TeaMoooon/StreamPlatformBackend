@@ -11,7 +11,7 @@ using System.Security.Claims;
 namespace StreamPlatformBackend.Controllers
 {
     [ApiController]
-    
+
     public class UsersController : ControllerBase
     {
 
@@ -56,7 +56,7 @@ namespace StreamPlatformBackend.Controllers
         }
 
 
-        
+
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] UserLoginDto loginDto)
         {
@@ -128,6 +128,39 @@ namespace StreamPlatformBackend.Controllers
                     ProfileImage = user.ProfileImage,
                     RegistrationDate = user.RegistrationDate,
                     IsOnline = user.IsOnline
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Ошибка при получении профиля пользователя");
+                return StatusCode(500, new { message = "Внутренняя ошибка сервера" });
+            }
+        }
+
+
+        [HttpGet("publicProfile")]
+        public async Task<IActionResult> GetPublicProfileByName(string nickname)
+        {
+            try
+            {
+                
+                var user = await _userService.GetUserByNameAsync(nickname);
+
+                if (user == null)
+                {
+                    return NotFound(new { message = "Пользователь не найден" });
+                }
+
+                return Ok(new UserPublicProfileDto
+                {
+                    Id = user.Id,
+                    Nickname = user.Nickname,
+                    ProfileDescription = user.ProfileDescription,
+                    ProfileImage = user.ProfileImage,
+                    RegistrationDate = user.RegistrationDate,
+                    IsOnline = user.IsOnline,
+                    CurrentStream = user.CurrentStream
+
                 });
             }
             catch (Exception ex)
@@ -223,7 +256,6 @@ namespace StreamPlatformBackend.Controllers
                 {
                     streamKey = user.StreamKey,
                     streamServerUrl = user.StreamServerUrl,
-                    isStreamer = user.IsStreamer
                 });
             }
             catch (Exception ex)
@@ -244,6 +276,8 @@ namespace StreamPlatformBackend.Controllers
 
             throw new UnauthorizedAccessException("Невалидный ID пользователя");
         }
+
+
 
     }
 }

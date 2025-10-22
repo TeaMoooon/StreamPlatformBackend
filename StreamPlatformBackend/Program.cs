@@ -59,6 +59,8 @@ builder.Services.AddScoped<IPasswordHasherService, PasswordHasherService>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IJwtService, JwtService>();
 
+builder.Services.AddScoped<IStreamService, StreamService>();
+
 // Настройка аутентификации
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -116,10 +118,10 @@ using (var scope = app.Services.CreateScope())
         var context = services.GetRequiredService<AppDbContext>();
 
         // Проверяем существование базы данных и создаем если нет
-        context.Database.EnsureCreated();
+        //context.Database.EnsureCreated();
 
         // Или используйте миграции (рекомендуется)
-        // context.Database.Migrate();
+        context.Database.Migrate();
 
         Console.WriteLine("Database created successfully");
     }
