@@ -138,13 +138,45 @@ namespace StreamPlatformBackend.Controllers
         }
 
 
-        [HttpGet("publicProfile")]
+        [HttpGet("public-profile-nickname")]
         public async Task<IActionResult> GetPublicProfileByName(string nickname)
         {
             try
             {
                 
                 var user = await _userService.GetUserByNameAsync(nickname);
+
+                if (user == null)
+                {
+                    return NotFound(new { message = "Пользователь не найден" });
+                }
+
+                return Ok(new UserPublicProfileDto
+                {
+                    Id = user.Id,
+                    Nickname = user.Nickname,
+                    ProfileDescription = user.ProfileDescription,
+                    ProfileImage = user.ProfileImage,
+                    RegistrationDate = user.RegistrationDate,
+                    IsOnline = user.IsOnline,
+                    CurrentStream = user.CurrentStream
+
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Ошибка при получении профиля пользователя");
+                return StatusCode(500, new { message = "Внутренняя ошибка сервера" });
+            }
+        }
+
+        [HttpGet("public-profile-id")]
+        public async Task<IActionResult> GetPublicProfileById(int userId)
+        {
+            try
+            {
+
+                var user = await _userService.GetUserByIdAsync(userId);
 
                 if (user == null)
                 {
@@ -278,6 +310,113 @@ namespace StreamPlatformBackend.Controllers
         }
 
 
+        [HttpGet("online-users")]
+        public async Task<ActionResult<IEnumerable<OnlineUserListDto>>> GetActiveStreams()
+        {
+            try
+            {
+                var activeStreams = await _userService.GetOnlineStreamersAsync();
+                return Ok(activeStreams);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Ошибка при получении активных стримов");
+                return StatusCode(500, "Произошла ошибка при получении данных");
+            }
+        }
+
+        [HttpGet("online-users/count")]
+        public async Task<ActionResult<int>> GetActiveStreamsCount()
+        {
+            try
+            {
+                var count = await _userService.GetOnlineUsersCountAsync();
+                return Ok(count);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Ошибка при получении количества активных стримов");
+                return StatusCode(500, "Произошла ошибка при получении данных");
+            }
+        }
+
+
+        [HttpGet("{userId}/subscriptions")]
+        public async Task<ActionResult<IEnumerable<OnlineUserListDto>>> GetUserSubscriptions(int userId)
+        {
+            try
+            {
+                var subscriptions = await _userService.GetUserSubscriptionsAsync(userId);
+                return Ok(subscriptions);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Ошибка при получении подписок пользователя {UserId}", userId);
+                return StatusCode(500, "Произошла ошибка при получении данных");
+            }
+        }
+
+
+
+        [HttpPost("{subscriberId}/subscribe/{targetUserId}")]
+        public async Task<ActionResult> SubscribeToUser(int subscriberId, int targetUserId)
+        {
+            try
+            {
+                var result = await _userService.SubscribeToUserAsync(subscriberId, targetUserId);
+
+                if (!result)
+                {
+                    return BadRequest("Не удалось выполнить подписку");
+                }
+
+                return Ok(new { message = "Подписка успешно оформлена" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Ошибка при подписке пользователя {SubscriberId} на {TargetUserId}",
+                    subscriberId, targetUserId);
+                return StatusCode(500, "Произошла ошибка при выполнении подписки");
+            }
+        }
+
+        [HttpDelete("{subscriberId}/subscribe/{targetUserId}")]
+        public async Task<ActionResult> UnsubscribeFromUser(int subscriberId, int targetUserId)
+        {
+            try
+            {
+                var result = await _userService.UnsubscribeFromUserAsync(subscriberId, targetUserId);
+
+                if (!result)
+                {
+                    return BadRequest("Не удалось отписаться");
+                }
+
+                return Ok(new { message = "Подписка успешно отменена" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Ошибка при отписке пользователя {SubscriberId} от {TargetUserId}",
+                    subscriberId, targetUserId);
+                return StatusCode(500, "Произошла ошибка при отписке");
+            }
+        }
+
+        [HttpGet("{subscriberId}/is-subscribed/{targetUserId}")]
+        public async Task<ActionResult<bool>> IsSubscribed(int subscriberId, int targetUserId)
+        {
+            try
+            {
+                var isSubscribed = await _userService.IsSubscribedAsync(subscriberId, targetUserId);
+                return Ok(isSubscribed);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Ошибка при проверке подписки {SubscriberId} на {TargetUserId}",
+                    subscriberId, targetUserId);
+                return StatusCode(500, "Произошла ошибка при проверке подписки");
+            }
+        }
 
     }
 }

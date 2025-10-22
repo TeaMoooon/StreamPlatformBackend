@@ -19,6 +19,13 @@ namespace StreamPlatformBackend.Services
         Task UpdateUserProfileAsync(int userId, UserUpdateDataDto userUpdateDataDto);
         Task<string> RegenerateStreamKeyAsync(int userId);
         Task<bool> StreamKeyExistsAsync(string streamKey);
+        Task<IEnumerable<OnlineUserListDto>> GetOnlineStreamersAsync();
+        Task<int> GetOnlineUsersCountAsync();
+        Task<IEnumerable<OnlineUserListDto>> GetUserSubscriptionsAsync(int userId);
+
+        Task<bool> SubscribeToUserAsync(int subscriberId, int targetUserId);
+        Task<bool> UnsubscribeFromUserAsync(int subscriberId, int targetUserId);
+        Task<bool> IsSubscribedAsync(int subscriberId, int targetUserId);
     }
 
     public class UserService : IUserService
@@ -336,6 +343,164 @@ namespace StreamPlatformBackend.Services
                 _logger.LogError(ex, "Неожиданная ошибка при обновлении профиля пользователя {UserId}", userId);
                 throw new ApplicationException("Произошла внутренняя ошибка при обновлении профиля");
             }
+        }
+
+
+
+        public async Task<IEnumerable<OnlineUserListDto>> GetOnlineStreamersAsync()
+        {
+            return await _context.Users
+                .Where(u => u.IsOnline) // Это уже означает "ведет стрим"
+                .Include(u => u.CurrentStream)
+                 //.OrderByDescending(u => u.CurrentStream!.Viewers) // По количеству зрителей
+                 // .ThenBy(u => u.Nickname) // Потом по имени
+                .OrderBy(u => u.Nickname)
+                .Select(u => new OnlineUserListDto
+                {
+                    Nickname = u.Nickname,
+                    ProfileImage = u.ProfileImage,
+                    IsOnline = u.IsOnline,
+                    StreamersLeague = u.StreamersLeague,
+                    PreviewlUrl = u.CurrentStream.PreviewlUrl,
+                    StreamName = u.CurrentStream.StreamName
+                })
+                .AsNoTracking()
+                .ToListAsync();
+        }
+
+        public async Task<int> GetOnlineUsersCountAsync()
+        {
+            return await _context.Users
+                .Where(u => u.IsOnline)
+                .CountAsync(); // ← ТОЛЬКО COUNT, без загрузки данных
+        }
+
+        public async Task<int> GetOnlineStreamersCountAsync()
+        {
+            return await _context.Users
+                .Where(u => u.IsOnline) // Количество активных стримеров
+                .CountAsync();
+        }
+
+
+
+        public async Task<IEnumerable<OnlineUserListDto>> GetUserSubscriptionsAsync(int userId)
+        {
+            return await _context.Subscriptions
+                .Where(s => s.SubscriberId == userId)
+                .Include(s => s.TargetUser)
+                .ThenInclude(u => u.CurrentStream)
+                .OrderByDescending(s => s.TargetUser.IsOnline) // Сначала онлайн
+                .ThenByDescending(s => s.SubscriptionDate)    // Потом новые подписки сначала
+                .Select(s => new OnlineUserListDto
+                {
+                    Nickname = s.TargetUser.Nickname,
+                    ProfileImage = s.TargetUser.ProfileImage,
+                    IsOnline = s.TargetUser.IsOnline,
+                    StreamersLeague = s.TargetUser.StreamersLeague,
+                    PreviewlUrl = s.TargetUser.CurrentStream != null ? s.TargetUser.CurrentStream.PreviewlUrl : string.Empty,
+                    StreamName = s.TargetUser.CurrentStream != null ? s.TargetUser.CurrentStream.StreamName : string.Empty
+                })
+                .AsNoTracking()
+                .ToListAsync();
+        }
+
+
+
+        public async Task<bool> SubscribeToUserAsync(int subscriberId, int targetUserId)
+        {
+            using var transaction = await _context.Database.BeginTransactionAsync();
+
+            try
+            {
+                // Проверяем, что пользователи существуют
+                var subscriber = await _context.Users.FindAsync(subscriberId);
+                var targetUser = await _context.Users.FindAsync(targetUserId);
+
+                if (subscriber == null || targetUser == null)
+                {
+                    _logger.LogWarning("Попытка подписки с несуществующими пользователями: Subscriber={SubscriberId}, Target={TargetUserId}",
+                        subscriberId, targetUserId);
+                    return false;
+                }
+
+                // Проверяем, что не подписываемся на себя
+                if (subscriberId == targetUserId)
+                {
+                    _logger.LogWarning("Пользователь {SubscriberId} попытался подписаться на себя", subscriberId);
+                    return false;
+                }
+
+                // Проверяем, нет ли уже подписки
+                var existingSubscription = await _context.Subscriptions
+                    .FirstOrDefaultAsync(s => s.SubscriberId == subscriberId && s.TargetUserId == targetUserId);
+
+                if (existingSubscription != null)
+                {
+                    _logger.LogWarning("Пользователь {SubscriberId} уже подписан на {TargetUserId}", subscriberId, targetUserId);
+                    return false;
+                }
+
+                // Создаем подписку
+                var subscription = new SubscriptionModel
+                {
+                    SubscriberId = subscriberId,
+                    TargetUserId = targetUserId,
+                    SubscriptionDate = DateTime.UtcNow
+                };
+
+                await _context.Subscriptions.AddAsync(subscription);
+                await _context.SaveChangesAsync();
+                await transaction.CommitAsync();
+
+                _logger.LogInformation("Пользователь {SubscriberId} успешно подписался на {TargetUserId}",
+                    subscriberId, targetUserId);
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                await transaction.RollbackAsync();
+                _logger.LogError(ex, "Ошибка при подписке пользователя {SubscriberId} на {TargetUserId}",
+                    subscriberId, targetUserId);
+                return false;
+            }
+        }
+
+        public async Task<bool> UnsubscribeFromUserAsync(int subscriberId, int targetUserId)
+        {
+            try
+            {
+                var subscription = await _context.Subscriptions
+                    .FirstOrDefaultAsync(s => s.SubscriberId == subscriberId && s.TargetUserId == targetUserId);
+
+                if (subscription == null)
+                {
+                    _logger.LogWarning("Попытка отписаться от несуществующей подписки: Subscriber={SubscriberId}, Target={TargetUserId}",
+                        subscriberId, targetUserId);
+                    return false;
+                }
+
+                _context.Subscriptions.Remove(subscription);
+                await _context.SaveChangesAsync();
+
+                _logger.LogInformation("Пользователь {SubscriberId} успешно отписался от {TargetUserId}",
+                    subscriberId, targetUserId);
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Ошибка при отписке пользователя {SubscriberId} от {TargetUserId}",
+                    subscriberId, targetUserId);
+                return false;
+            }
+        }
+
+        public async Task<bool> IsSubscribedAsync(int subscriberId, int targetUserId)
+        {
+            return await _context.Subscriptions
+                .AnyAsync(s => s.SubscriberId == subscriberId && s.TargetUserId == targetUserId);
         }
     }
 }
