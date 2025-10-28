@@ -11,7 +11,7 @@ using System.Security.Claims;
 namespace StreamPlatformBackend.Controllers
 {
     [ApiController]
-
+    [Route("api/[controller]")]
     public class UsersController : ControllerBase
     {
 
