@@ -1,52 +1,71 @@
-﻿using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using StreamPlatformBackend.Data;
-using StreamPlatformBackend.DTO;
-using StreamPlatformBackend.Models.Stream;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using StreamPlatformBackend.DTO.StreamDTO;
 using StreamPlatformBackend.Services;
-
-namespace StreamPlatformBackend.Controllers;
+using System.Security.Claims;
 
 [ApiController]
-[Route("api/stream")]
+[Route("api/[controller]")]
+[Authorize]
 public class StreamController : ControllerBase
 {
     private readonly IStreamService _streamService;
+    private readonly IUserService _userService;
+    private readonly ILogger<StreamController> _logger;
 
-    public StreamController(IStreamService streamService)
+    public StreamController(IStreamService streamService, IUserService userService, ILogger<StreamController> logger)
     {
         _streamService = streamService;
+        _userService = userService;
+        _logger = logger;
     }
 
-    [HttpPost("start")]
-    public async Task<IActionResult> StartStream([FromBody] StartStreamRequest request)
+    // PUT api/stream - обновить информацию о стриме (название, категорию и т.д.)
+    [HttpPut]
+    public async Task<IActionResult> UpdateStream([FromBody] StreamUpdateDto updateDto)
     {
         try
         {
-            var stream = await _streamService.StartStreamAsync(request.UserId, request.StreamKey);
+            var userId = GetCurrentUserId();
+            var result = await _streamService.UpdateStreamAsync(userId, updateDto);
+
+            if (!result)
+                return BadRequest("No active stream found or update failed");
+
+            return Ok(new { message = "Stream updated successfully" });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error updating stream for user {UserId}", GetCurrentUserId());
+            return StatusCode(500, "Internal server error");
+        }
+    }
+
+    // GET api/stream/status - статус текущего стрима
+    [HttpGet("status")]
+    public async Task<IActionResult> GetStreamStatus()
+    {
+        try
+        {
+            var userId = GetCurrentUserId();
+            var isStreaming = await _streamService.IsUserStreamingAsync(userId);
+            var streamInfo = await _streamService.GetStreamInfoAsync(userId);
+
             return Ok(new
             {
-                success = true,
-                streamId = stream.Id,
-                streamName = stream.StreamName
+                isStreaming,
+                streamInfo
             });
         }
-        catch (UnauthorizedAccessException ex)
+        catch (Exception ex)
         {
-            return Unauthorized(new { success = false, error = ex.Message });
+            _logger.LogError(ex, "Error getting stream status for user {UserId}", GetCurrentUserId());
+            return StatusCode(500, "Internal server error");
         }
     }
 
-    [HttpPost("end/{streamId}")]
-    public async Task<IActionResult> EndStream(int streamId)
+    private int GetCurrentUserId()
     {
-        await _streamService.EndStreamAsync(streamId);
-        return Ok(new { success = true });
+        return int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value);
     }
-}
-
-public class StartStreamRequest
-{
-    public int UserId { get; set; }
-    public string StreamKey { get; set; } = string.Empty;
 }
