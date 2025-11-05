@@ -121,7 +121,7 @@ namespace StreamPlatformBackend.Models.User
         public string? LastPreviewlUrl { get; set; } //превью стрима
         public string? LastStreamName { get; set; }
 
-        public int? LastCategoryId { get; set; }
+        //public int? LastCategoryId { get; set; }
         public string[] LastTags { get; set; } = Array.Empty<string>();
 
 

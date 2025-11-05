@@ -13,7 +13,7 @@ namespace StreamPlatformBackend.Data
         public DbSet<UserModel> Users { get; set; }
         public DbSet<SubscriptionModel> Subscriptions { get; set; }
         public DbSet<StreamModel> Streams { get; set; }
-        public DbSet<StreamCategory> StreamCategories { get; set; }
+        //public DbSet<StreamCategory> StreamCategories { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {

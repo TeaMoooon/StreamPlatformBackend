@@ -208,14 +208,14 @@ namespace StreamPlatformBackend.Services
         }
 
         // Вспомогательные методы
-
+        /*
         private async Task<int> GetDefaultCategoryIdAsync()
         {
             var defaultCategory = await _context.StreamCategories
                 .FirstOrDefaultAsync(c => c.Name == "Just Chatting");
 
             return defaultCategory?.Id ?? 1; // Fallback to ID 1
-        }
+        }/*/
 
         private bool TryParseUserIdFromStreamKey(string streamKey, out int userId)
         {

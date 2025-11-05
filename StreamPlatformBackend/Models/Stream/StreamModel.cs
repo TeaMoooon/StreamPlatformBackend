@@ -20,9 +20,9 @@ namespace StreamPlatformBackend.Models.Stream
         // Данные о текущем стриме
         public string StreamName { get; set; } = string.Empty;
 
-        public int CategoryId { get; set; }
-        [ForeignKey("CategoryId")]
-        public virtual StreamCategory Category { get; set; } = null!;
+        // public int CategoryId { get; set; }
+        //[ForeignKey("CategoryId")]
+        //public virtual StreamCategory Category { get; set; } = null!;
 
         public string[] Tags { get; set; } = Array.Empty<string>();
 
