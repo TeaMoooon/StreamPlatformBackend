@@ -15,7 +15,7 @@ public class StreamCallbackController : ControllerBase
     }
 
     // Вызывается nginx когда OBS начинает трансляцию
-    [HttpPost("start")]
+    /*[HttpPost("start")]
     public async Task<IActionResult> OnStreamStart([FromForm] string name) // name = streamKey
     {
         try
@@ -48,6 +48,55 @@ public class StreamCallbackController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error processing stream start for key: {StreamKey}", name);
+            return StatusCode(500, "Internal server error");
+        }
+    }
+
+    */
+
+    [HttpPost("start")]
+    public async Task<IActionResult> OnStreamStart([FromForm] string name)
+    {
+        try
+        {
+            _logger.LogInformation("=== STREAM START CALLBACK ===");
+            _logger.LogInformation("Received stream key: {StreamKey}", name);
+            _logger.LogInformation("Request headers: {@Headers}", Request.Headers);
+
+            if (string.IsNullOrEmpty(name))
+            {
+                _logger.LogWarning("Stream key is empty");
+                return BadRequest("Stream key is required");
+            }
+
+            _logger.LogInformation("Parsing user ID from stream key...");
+
+            if (!TryParseUserIdFromStreamKey(name, out int userId))
+            {
+                _logger.LogWarning("Failed to parse user ID from: {StreamKey}", name);
+                return Unauthorized("Invalid stream key format");
+            }
+
+            _logger.LogInformation("Parsed user ID: {UserId}", userId);
+            _logger.LogInformation("Validating stream key...");
+
+            // ВРЕМЕННО: закомментируй проверку для тестов
+            // if (!await _streamService.ValidateStreamKeyAsync(name))
+            // {
+            //     _logger.LogWarning("Stream key validation failed: {StreamKey}", name);
+            //     return Unauthorized("Invalid stream key");
+            // }
+
+            _logger.LogInformation("Starting stream for user {UserId}...", userId);
+
+            await _streamService.StartStreamAsync(userId, name);
+
+            _logger.LogInformation("=== STREAM START SUCCESS ===");
+            return Ok();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "=== STREAM START ERROR ===");
             return StatusCode(500, "Internal server error");
         }
     }
