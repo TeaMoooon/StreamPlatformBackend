@@ -22,7 +22,7 @@ namespace StreamPlatformBackend.Models.Stream
 
         public int CategoryId { get; set; }
         [ForeignKey("CategoryId")]
-        public StreamCategory Category { get; set; }
+        public virtual StreamCategory Category { get; set; } = null!;
 
         public string[] Tags { get; set; } = Array.Empty<string>();
 

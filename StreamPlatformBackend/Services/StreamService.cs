@@ -37,7 +37,7 @@ namespace StreamPlatformBackend.Services
 
                 var user = await _context.Users
                     .Include(u => u.CurrentStream)
-                    .ThenInclude(s => s.Category)
+                    //.ThenInclude(s => s.Category)
                     .FirstOrDefaultAsync(u => u.Id == userId);
 
                 if (user == null)
@@ -58,7 +58,7 @@ namespace StreamPlatformBackend.Services
                 {
                     UserId = user.Id,
                     StreamName = user.LastStreamName ?? $"{user.Nickname}'s Stream",
-                    CategoryId = user.LastCategoryId ?? await GetDefaultCategoryIdAsync(),
+                    //CategoryId = user.LastCategoryId ?? await GetDefaultCategoryIdAsync(),
                     Tags = user.LastTags ?? Array.Empty<string>(),
                     PreviewlUrl = user.LastPreviewlUrl,
                     StartedAt = DateTime.UtcNow,
@@ -105,7 +105,7 @@ namespace StreamPlatformBackend.Services
 
                 // Сохраняем последние настройки для будущих стримов
                 user.LastStreamName = user.CurrentStream.StreamName;
-                user.LastCategoryId = user.CurrentStream.CategoryId;
+                //user.LastCategoryId = user.CurrentStream.CategoryId;
                 user.LastTags = user.CurrentStream.Tags;
                 user.LastPreviewlUrl = user.CurrentStream.PreviewlUrl;
 
@@ -138,14 +138,14 @@ namespace StreamPlatformBackend.Services
 
                 if (!string.IsNullOrEmpty(updateDto.StreamName))
                     stream.StreamName = updateDto.StreamName;
-
+                /*
                 if (updateDto.CategoryId.HasValue)
                 {
                     var categoryExists = await _context.StreamCategories
                         .AnyAsync(c => c.Id == updateDto.CategoryId.Value);
                     if (categoryExists)
                         stream.CategoryId = updateDto.CategoryId.Value;
-                }
+                }*/
 
                 if (updateDto.Tags != null)
                     stream.Tags = updateDto.Tags;
@@ -238,7 +238,7 @@ namespace StreamPlatformBackend.Services
                 StreamName = stream.StreamName,
                 StreamerName = user.Nickname,
                 StreamerId = user.Id,
-                Category = stream.Category?.Name ?? "Unknown",
+                //Category = stream.Category?.Name ?? "Unknown",
                 Tags = stream.Tags,
                 PreviewlUrl = stream.PreviewlUrl,
                 HlsUrl = $"/hls/{user.StreamKey}.m3u8",
