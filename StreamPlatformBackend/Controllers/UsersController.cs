@@ -287,7 +287,6 @@ namespace StreamPlatformBackend.Controllers
                 return Ok(new
                 {
                     streamKey = user.StreamKey,
-                    streamServerUrl = user.StreamServerUrl,
                 });
             }
             catch (Exception ex)
@@ -384,7 +383,7 @@ namespace StreamPlatformBackend.Controllers
             }
         }
 
-        [HttpDelete("subscribe/{targetUserId}")]
+        [HttpDelete("unsubscribe/{targetUserId}")]
         [Authorize] // ← Требуем авторизацию
         public async Task<ActionResult> UnsubscribeFromUser(int targetUserId)
         {

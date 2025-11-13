@@ -15,6 +15,12 @@ namespace StreamPlatformBackend.Services
         Task<bool> ValidateStreamKeyAsync(string streamKey);
         Task<bool> IsUserStreamingAsync(int userId);
         Task<int> IncrementViewCountAsync(int streamId);
+
+
+
+
+
+        Task<StreamModel?> GetStreamByUserIdAsync(int userId);
     }
 
     // Services/StreamService.cs
@@ -22,10 +28,12 @@ namespace StreamPlatformBackend.Services
     {
         private readonly AppDbContext _context;
         private readonly ILogger<StreamService> _logger;
+        private readonly IStreamNotificationService _notificationService;
 
-        public StreamService(AppDbContext context, ILogger<StreamService> logger)
+        public StreamService(AppDbContext context, IStreamNotificationService notificationService, ILogger<StreamService> logger)
         {
             _context = context;
+            _notificationService = notificationService;
             _logger = logger;
         }
 
@@ -72,6 +80,9 @@ namespace StreamPlatformBackend.Services
 
                 await _context.SaveChangesAsync();
 
+                // 🔥 ОТПРАВЛЯЕМ УВЕДОМЛЕНИЯ О НАЧАЛЕ СТРИМА
+                await _notificationService.NotifyStreamStartedAsync(userId, stream);
+
                 _logger.LogInformation("Stream started successfully for user {UserId}. Stream ID: {StreamId}",
                     userId, stream.Id);
 
@@ -113,6 +124,8 @@ namespace StreamPlatformBackend.Services
 
                 _logger.LogInformation("Stream ended successfully for user {UserId}. Stream duration: {Duration}",
                     userId, DateTime.UtcNow - user.CurrentStream.StartedAt);
+
+                await _notificationService.NotifyStreamEndedAsync(userId);
 
                 return true;
             }
@@ -169,7 +182,7 @@ namespace StreamPlatformBackend.Services
                 .Include(u => u.CurrentStream)
                 .FirstOrDefaultAsync(u => u.Id == userId);
 
-            if (user?.CurrentStream == null)
+            if (user?.CurrentStream == null || user.CurrentStream.EndedAt != null)
                 return null;
 
             return MapToStreamInfoDto(user.CurrentStream, user);
@@ -247,5 +260,18 @@ namespace StreamPlatformBackend.Services
                 IsLive = stream.EndedAt == null
             };
         }
+
+
+
+
+        // Добавим новый метод
+        public async Task<StreamModel?> GetStreamByUserIdAsync(int userId)
+        {
+            return await _context.Streams
+                .Include(s => s.User)
+                .FirstOrDefaultAsync(s => s.UserId == userId && s.EndedAt == null);
+        }
+
+
     }
 }

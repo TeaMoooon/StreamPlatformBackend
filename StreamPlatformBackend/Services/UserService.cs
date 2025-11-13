@@ -4,6 +4,7 @@ using StreamPlatformBackend.Data;
 using StreamPlatformBackend.DTO.UserDTO;
 using StreamPlatformBackend.Models.Enums;
 using StreamPlatformBackend.Models.User;
+using System.Collections.Concurrent;
 
 namespace StreamPlatformBackend.Services
 {
@@ -26,6 +27,12 @@ namespace StreamPlatformBackend.Services
         Task<bool> SubscribeToUserAsync(int subscriberId, int targetUserId);
         Task<bool> UnsubscribeFromUserAsync(int subscriberId, int targetUserId);
         Task<bool> IsSubscribedAsync(int subscriberId, int targetUserId);
+
+
+
+
+        Task<List<UserModel>> GetSubscribersAsync(int streamerId);
+        Task UpdateUserOnlineStatusAsync(int userId, bool isOnline);
     }
 
     public class UserService : IUserService
@@ -212,7 +219,6 @@ namespace StreamPlatformBackend.Services
         }
 
 
-
         public async Task<bool> ValidateUserCredentialsAsync(string email, string password)
         {
             try
@@ -346,11 +352,10 @@ namespace StreamPlatformBackend.Services
         }
 
 
-
         public async Task<IEnumerable<OnlineUserListDto>> GetOnlineStreamersAsync()
         {
             return await _context.Users
-                .Where(u => u.IsOnline) // Это уже означает "ведет стрим"
+                .Where(u => u.IsOnline && u.CurrentStream != null) // Это уже означает "ведет стрим"
                 .Include(u => u.CurrentStream)
                  //.OrderByDescending(u => u.CurrentStream!.Viewers) // По количеству зрителей
                  // .ThenBy(u => u.Nickname) // Потом по имени
@@ -381,7 +386,6 @@ namespace StreamPlatformBackend.Services
                 .Where(u => u.IsOnline) // Количество активных стримеров
                 .CountAsync();
         }
-
 
 
         public async Task<IEnumerable<OnlineUserListDto>> GetUserSubscriptionsAsync(int userId)
@@ -501,6 +505,31 @@ namespace StreamPlatformBackend.Services
         {
             return await _context.Subscriptions
                 .AnyAsync(s => s.SubscriberId == subscriberId && s.TargetUserId == targetUserId);
+        }
+
+
+
+
+
+
+        public async Task<List<UserModel>> GetSubscribersAsync(int streamerId)
+        {
+            return await _context.Subscriptions
+                .Where(s => s.TargetUserId == streamerId) // Подписчики на этого стримера
+                .Include(s => s.Subscriber)
+                .Select(s => s.Subscriber)
+                .AsNoTracking()
+                .ToListAsync();
+        }
+        public async Task UpdateUserOnlineStatusAsync(int userId, bool isOnline)
+        {
+            var user = await _context.Users.FindAsync(userId);
+            if (user != null)
+            {
+                user.IsOnline = isOnline;
+                user.LastOnlineDate = isOnline ? null : DateTime.UtcNow;
+                await _context.SaveChangesAsync();
+            }
         }
     }
 }

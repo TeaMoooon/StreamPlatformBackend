@@ -4,6 +4,7 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using Npgsql;
 using StreamPlatformBackend.Data;
+using StreamPlatformBackend.Hubs;
 using StreamPlatformBackend.Services;
 using System.Text;
 
@@ -14,6 +15,9 @@ builder.Services.AddControllers();
 
 // ⭐ ДОБАВЛЯЕМ SWAGGER ⭐
 builder.Services.AddEndpointsApiExplorer();
+
+// ⭐ ДОБАВЛЯЕМ WebSocket ⭐
+builder.Services.AddSignalR();
 
 builder.Services.AddSwaggerGen(options =>
 {
@@ -58,7 +62,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddScoped<IPasswordHasherService, PasswordHasherService>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IJwtService, JwtService>();
-
+builder.Services.AddScoped<IStreamNotificationService, StreamNotificationService>();
 builder.Services.AddScoped<IStreamService, StreamService>();
 
 // Настройка аутентификации
@@ -172,5 +176,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+app.MapHub<StreamHub>("/streamHub");
 
 app.Run();
