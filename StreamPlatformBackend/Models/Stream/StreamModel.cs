@@ -3,6 +3,10 @@ using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using System.Text.Json.Serialization;
 
+using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
+using System.Text.Json.Serialization;
+
 namespace StreamPlatformBackend.Models.Stream
 {
     public class StreamModel
@@ -22,7 +26,7 @@ namespace StreamPlatformBackend.Models.Stream
 
         public List<string> Tags { get; set; } = new();
 
-        public string? PreviewUrl { get; set; } // исправлено название
+        public string? PreviewUrl { get; set; }
 
         public int TotalViews { get; set; }
 
@@ -31,14 +35,19 @@ namespace StreamPlatformBackend.Models.Stream
 
         public bool IsActive => StartedAt != null && EndedAt == null;
 
+        // ---------- Категория ----------
+        public int? CategoryId { get; set; } // nullable, чтобы старые стримы без категории не ломались
+
+        [ForeignKey(nameof(CategoryId))]
+        public virtual StreamCategory? Category { get; set; }
+    }
+}
+
         // Можно добавить новые поля в будущем
         // public bool AllowClipCreation { get; set; } = true;
         // public bool IsChatEnabled { get; set; } = true;
         // public bool IsSubOnlyChat { get; set; } = false;
-    }
 
-
-}
 
 
 

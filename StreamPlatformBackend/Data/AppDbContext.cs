@@ -13,7 +13,7 @@ namespace StreamPlatformBackend.Data
         public DbSet<UserModel> Users { get; set; }
         public DbSet<SubscriptionModel> Subscriptions { get; set; }
         public DbSet<StreamModel> Streams { get; set; }
-        //public DbSet<StreamCategory> StreamCategories { get; set; }
+        public DbSet<StreamCategory> StreamCategories { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -24,7 +24,7 @@ namespace StreamPlatformBackend.Data
 
 
             modelBuilder.Entity<SubscriptionModel>()
-                .ToTable(t => t.HasCheckConstraint("CK_Subscription_NotSelf","\"SubscriberId\" != \"TargetUserId\""));
+                .ToTable(t => t.HasCheckConstraint("CK_Subscription_NotSelf", "\"SubscriberId\" != \"TargetUserId\""));
 
             // 🔥 ОБНОВЛЕННЫЕ ОТНОШЕНИЯ - используйте навигационные свойства
             modelBuilder.Entity<SubscriptionModel>()
@@ -38,6 +38,12 @@ namespace StreamPlatformBackend.Data
                 .WithMany(u => u.Subscribers) // Ссылаемся на навигационное свойство
                 .HasForeignKey(s => s.TargetUserId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<StreamModel>()
+                .HasOne(s => s.Category)
+                .WithMany(c => c.Streams)
+                .HasForeignKey(s => s.CategoryId)
+                .OnDelete(DeleteBehavior.SetNull);
 
             modelBuilder.Entity<SubscriptionModel>().HasKey(s => new { s.SubscriberId, s.TargetUserId });
         }
