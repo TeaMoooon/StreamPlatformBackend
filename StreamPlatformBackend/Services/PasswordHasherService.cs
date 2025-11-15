@@ -18,19 +18,15 @@ namespace StreamPlatformBackend.Services
         {
             _logger = logger;
             _workFactor = workFactor;
-
-            // Убедимся, что используется правильная версия BCrypt
-            BCrypt.Net.BCrypt.GenerateSalt(_workFactor);
         }
 
         public string HashPassword(string password)
         {
+            if (string.IsNullOrEmpty(password))
+                throw new ArgumentException("Password cannot be null or empty");
+
             try
             {
-                if (string.IsNullOrEmpty(password))
-                    throw new ArgumentException("Password cannot be null or empty");
-
-                // Используем стандартный метод вместо Enhanced
                 var salt = BCrypt.Net.BCrypt.GenerateSalt(_workFactor);
                 var hashedPassword = BCrypt.Net.BCrypt.HashPassword(password, salt);
 
@@ -46,12 +42,11 @@ namespace StreamPlatformBackend.Services
 
         public bool VerifyPassword(string password, string hashedPassword)
         {
+            if (string.IsNullOrEmpty(password) || string.IsNullOrEmpty(hashedPassword))
+                return false;
+
             try
             {
-                if (string.IsNullOrEmpty(password) || string.IsNullOrEmpty(hashedPassword))
-                    return false;
-
-                // Используем стандартный метод вместо Enhanced
                 var isValid = BCrypt.Net.BCrypt.Verify(password, hashedPassword);
 
                 if (!isValid)

@@ -7,7 +7,6 @@ namespace StreamPlatformBackend.Models.Stream
 {
     public class StreamModel
     {
-
         [Key]
         public int Id { get; set; }
 
@@ -15,39 +14,53 @@ namespace StreamPlatformBackend.Models.Stream
         public int UserId { get; set; }
 
         [JsonIgnore]
-        public virtual UserModel User { get; set; }
+        public virtual UserModel User { get; set; } = null!;
 
-        // Данные о текущем стриме
+        // ---------- Данные о стриме ----------
+        [Required]
         public string StreamName { get; set; } = string.Empty;
 
-        // public int CategoryId { get; set; }
-        //[ForeignKey("CategoryId")]
-        //public virtual StreamCategory Category { get; set; } = null!;
+        public List<string> Tags { get; set; } = new();
 
-        public string[] Tags { get; set; } = Array.Empty<string>();
+        public string? PreviewUrl { get; set; } // исправлено название
 
-        public string? PreviewlUrl { get; set; }
+        public int TotalViews { get; set; }
 
-        // Статистика просмотров
-        public int TotalViews { get; set; } = 0;
-
-        // Временные метки
         public DateTime? StartedAt { get; set; }
         public DateTime? EndedAt { get; set; }
 
-        //public bool AllowClipCreation { get; set; } = true; //может быть на будущее
+        public bool IsActive => StartedAt != null && EndedAt == null;
 
-        // public virtual ICollection<StreamChatMessageModel> ChatMessages { get; set; } //хз как чат этот делать
-
-        /*
-         * 
-         * Вот надо подумать тут или не тут
-        public bool IsChatEnabled { get; set; } = true;
-        public bool IsSubOnlyChat { get; set; } = false;
-        public int SlowModeInterval { get; set; } = 0;
-        public bool EmoteOnlyMode { get; set; } = false;
-        */
-        
-
+        // Можно добавить новые поля в будущем
+        // public bool AllowClipCreation { get; set; } = true;
+        // public bool IsChatEnabled { get; set; } = true;
+        // public bool IsSubOnlyChat { get; set; } = false;
     }
+
+
 }
+
+
+
+
+    // public int CategoryId { get; set; }
+    //[ForeignKey("CategoryId")]
+    //public virtual StreamCategory Category { get; set; } = null!;
+
+
+    // Статистика просмотров
+
+    // Временные метки
+
+    //public bool AllowClipCreation { get; set; } = true; //может быть на будущее
+
+    // public virtual ICollection<StreamChatMessageModel> ChatMessages { get; set; } //хз как чат этот делать
+
+    /*
+     * 
+     * Вот надо подумать тут или не тут
+    public bool IsChatEnabled { get; set; } = true;
+    public bool IsSubOnlyChat { get; set; } = false;
+    public int SlowModeInterval { get; set; } = 0;
+    public bool EmoteOnlyMode { get; set; } = false;
+    */

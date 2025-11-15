@@ -20,52 +20,28 @@ public class StreamController : ControllerBase
         _logger = logger;
     }
 
-    // PUT api/stream - обновить информацию о стриме (название, категорию и т.д.)
+    /// <summary>Обновляет текущий стрим пользователя</summary>
     [HttpPut]
     public async Task<IActionResult> UpdateStream([FromBody] StreamUpdateDto updateDto)
     {
-        try
-        {
-            var userId = GetCurrentUserId();
-            var result = await _streamService.UpdateStreamAsync(userId, updateDto);
-
-            if (!result)
-                return BadRequest("No active stream found or update failed");
-
-            return Ok(new { message = "Stream updated successfully" });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error updating stream for user {UserId}", GetCurrentUserId());
-            return StatusCode(500, "Internal server error");
-        }
+        var userId = GetCurrentUserId();
+        var success = await _streamService.UpdateStreamAsync(userId, updateDto);
+        if (!success) return BadRequest("No active stream found or update failed");
+        return Ok(new { message = "Stream updated successfully" });
     }
 
-    // GET api/stream/status - статус текущего стрима
+    /// <summary>Возвращает статус текущего стрима пользователя</summary>
     [HttpGet("status")]
     public async Task<IActionResult> GetStreamStatus()
     {
-        try
-        {
-            var userId = GetCurrentUserId();
-            var isStreaming = await _streamService.IsUserStreamingAsync(userId);
-            var streamInfo = await _streamService.GetStreamInfoAsync(userId);
-
-            return Ok(new
-            {
-                isStreaming,
-                streamInfo
-            });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Error getting stream status for user {UserId}", GetCurrentUserId());
-            return StatusCode(500, "Internal server error");
-        }
+        var userId = GetCurrentUserId();
+        var isStreaming = await _streamService.IsUserStreamingAsync(userId);
+        var streamInfo = await _streamService.GetStreamInfoAsync(userId);
+        return Ok(new { isStreaming, streamInfo });
     }
 
     private int GetCurrentUserId()
     {
-        return int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value);
+        return int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "0");
     }
 }

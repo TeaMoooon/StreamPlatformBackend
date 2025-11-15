@@ -19,13 +19,15 @@ namespace StreamPlatformBackend.Services
 
         public JwtService(IConfiguration configuration)
         {
-            _secretKey = configuration["Jwt:SecretKey"] ?? "fallback-secret-key-minimum-32-chars";
+            _secretKey = configuration["Jwt:SecretKey"] ?? throw new ArgumentException("Jwt:SecretKey not set");
             _issuer = configuration["Jwt:Issuer"] ?? "StreamPlatformBackend";
             _audience = configuration["Jwt:Audience"] ?? "StreamPlatformUsers";
         }
 
         public string GenerateToken(UserModel user)
         {
+            if (user == null) throw new ArgumentNullException(nameof(user));
+
             var claims = new[]
             {
                 new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
@@ -41,7 +43,7 @@ namespace StreamPlatformBackend.Services
                 issuer: _issuer,
                 audience: _audience,
                 claims: claims,
-                expires: DateTime.Now.AddHours(24), // Токен на 24 часа
+                expires: DateTime.UtcNow.AddHours(24), // Используем UTC
                 signingCredentials: creds
             );
 

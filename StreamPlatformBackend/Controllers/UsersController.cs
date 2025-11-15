@@ -1,23 +1,18 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
-using StreamPlatformBackend.Data;
 using StreamPlatformBackend.DTO.UserDTO;
-using StreamPlatformBackend.Models;
 using StreamPlatformBackend.Services;
 using System.Security.Claims;
-
 
 namespace StreamPlatformBackend.Controllers
 {
     [ApiController]
-    [Route("api/user")]
+    [Route("api/users")]
     public class UsersController : ControllerBase
     {
-
         private readonly IUserService _userService;
-        private readonly IJwtService _jwtService;
         private readonly ILogger<UsersController> _logger;
+        private readonly IJwtService _jwtService;
 
         public UsersController(IUserService userService, IJwtService jwtService, ILogger<UsersController> logger)
         {
@@ -26,215 +21,203 @@ namespace StreamPlatformBackend.Controllers
             _logger = logger;
         }
 
-
+        /// <summary>
+        /// Регистрация нового пользователя.
+        /// </summary>
+        /// <param name="dto">Данные для регистрации.</param>
+        /// <response code="200">Пользователь успешно зарегистрирован. Возвращает id, email, nickname.</response>
+        /// <response code="400">Неверные входные данные или email/nickname уже заняты.</response>
+        /// <response code="500">Внутренняя ошибка сервера.</response>
         [HttpPost("register")]
-        public async Task<IActionResult> Register([FromBody] UserCreateDto userCreateDto)
+        public async Task<IActionResult> Register([FromBody] UserCreateDto dto)
         {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+
             try
             {
-                if (!ModelState.IsValid)
-                {
-                    return BadRequest(ModelState);
-                }
-
-                var user = await _userService.CreateUserAsync(userCreateDto);
-
+                var user = await _userService.CreateUserAsync(dto);
                 return Ok(new
                 {
-                    message = "Пользователь успешно зарегистрирован",
-                    userId = user.Id
+                    user.Id,
+                    user.Email,
+                    user.Nickname
                 });
             }
             catch (ArgumentException ex)
             {
-                return Conflict(new { message = ex.Message });
-            }
-            catch (ApplicationException ex)
-            {
-                return StatusCode(500, new { message = ex.Message });
-            }
-        }
-
-
-
-        [HttpPost("login")]
-        public async Task<IActionResult> Login([FromBody] UserLoginDto loginDto)
-        {
-            try
-            {
-                if (!ModelState.IsValid)
-                {
-                    return BadRequest(ModelState);
-                }
-
-                var isValid = await _userService.ValidateUserCredentialsAsync(
-                    loginDto.Email, loginDto.Password);
-
-                if (!isValid)
-                {
-                    return Unauthorized(new { message = "Неверный email или пароль" });
-                }
-
-                var user = await _userService.GetUserByEmailAsync(loginDto.Email);
-
-                if (user == null)
-                {
-                    return Unauthorized(new { message = "Неверный email или пароль" });
-                }
-
-                // ⭐ ГЕНЕРИРУЕМ JWT ТОКЕН ⭐
-                var token = _jwtService.GenerateToken(user);
-
-                return Ok(new
-                {
-                    message = "Вход выполнен успешно",
-                    token = token,
-                    user = new
-                    {
-                        user.Id,
-                        user.Email,
-                        user.Nickname,
-                        user.Role
-                    }
-                });
+                _logger.LogWarning("Ошибка регистрации: {Message}", ex.Message);
+                return BadRequest(new { message = ex.Message });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Ошибка при входе пользователя {Email}", loginDto.Email);
+                _logger.LogError(ex, "Ошибка при регистрации пользователя с email {Email}", dto.Email);
                 return StatusCode(500, new { message = "Внутренняя ошибка сервера" });
             }
         }
 
+        /// <summary>
+        /// Вход пользователя (валидация логина). Возвращает JWT токен.
+        /// </summary>
+        /// <param name="dto">Email и пароль.</param>
+        /// <response code="200">Авторизация успешна. Возвращается токен.</response>
+        /// <response code="401">Неверный email или пароль.</response>
+        /// <response code="500">Внутренняя ошибка сервера.</response>
+        [HttpPost("login")]
+        public async Task<IActionResult> Login([FromBody] UserLoginDto dto)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            try
+            {
+                var user = await _userService.GetUserByEmailAsync(dto.Email);
+                if (user == null || !await _userService.ValidateUserCredentialsAsync(dto.Email, dto.Password))
+                {
+                    _logger.LogWarning("Неудачная попытка входа для {Email}", dto.Email);
+                    return Unauthorized(new { message = "Неверный email или пароль" });
+                }
+
+                // Генерируем JWT
+                var token = _jwtService.GenerateToken(user);
+
+                // Возвращаем токен клиенту
+                return Ok(new
+                {
+                    message = "Вход выполнен успешно",
+                    token
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Ошибка при попытке входа для {Email}", dto.Email);
+                return StatusCode(500, new { message = "Внутренняя ошибка сервера" });
+            }
+        }
+
+
+        /// <summary>
+        /// Получить публичный профиль по никнейму.
+        /// </summary>
+        /// <param name="nickname">Никнейм пользователя.</param>
+        /// <response code="200">Возвращает публичный профиль.</response>
+        /// <response code="404">Пользователь не найден.</response>
+        /// <response code="500">Внутренняя ошибка сервера.</response>
+        [HttpGet("by-nickname/{nickname}")]
+        public async Task<IActionResult> GetPublicProfileByNickname(string nickname)
+        {
+            try
+            {
+                var user = await _userService.GetUserByNameAsync(nickname);
+                if (user == null) return NotFound(new { message = "Пользователь не найден" });
+
+                var dto = new UserPublicProfileDto
+                {
+                    Id = user.Id,
+                    Nickname = user.Nickname,
+                    ProfileDescription = user.ProfileDescription,
+                    BackgroundImage = user.BackgroundImage,
+                    ProfileImage = user.ProfileImage,
+                    RegistrationDate = user.RegistrationDate,
+                    IsOnline = user.IsOnline,
+                    CurrentStream = user.CurrentStream
+                };
+
+                return Ok(dto);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Ошибка при получении публичного профиля для никнейма {Nickname}", nickname);
+                return StatusCode(500, new { message = "Внутренняя ошибка сервера" });
+            }
+        }
+
+        /// <summary>
+        /// Получить личный профиль текущего авторизованного пользователя.
+        /// </summary>
+        /// <response code="200">Возвращает личный профиль.</response>
+        /// <response code="401">Пользователь не авторизован.</response>
+        /// <response code="404">Пользователь не найден.</response>
+        /// <response code="500">Внутренняя ошибка сервера.</response>
         [Authorize]
         [HttpGet("profile")]
-        public async Task<IActionResult> GetProfile()
+        public async Task<IActionResult> GetMyProfile()
         {
             try
             {
                 var userId = GetCurrentUserId();
                 var user = await _userService.GetUserByIdAsync(userId);
+                if (user == null) return NotFound(new { message = "Пользователь не найден" });
 
-                if (user == null)
-                {
-                    return NotFound(new { message = "Пользователь не найден" });
-                }
-
-                return Ok(new UserProfileDto
+                var dto = new UserProfileDto
                 {
                     Id = user.Id,
                     Email = user.Email,
                     Nickname = user.Nickname,
                     ProfileDescription = user.ProfileDescription,
+                    BackgroundImage = user.BackgroundImage,
                     ProfileImage = user.ProfileImage,
                     RegistrationDate = user.RegistrationDate,
+                    CashBalance = user.CashBalance,
                     IsOnline = user.IsOnline
-                });
+                };
+
+                return Ok(dto);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                _logger.LogWarning("Не удалось получить ID текущего пользователя: {Message}", ex.Message);
+                return Unauthorized(new { message = "Неверный токен авторизации" });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Ошибка при получении профиля пользователя");
+                _logger.LogError(ex, "Ошибка при получении профиля текущего пользователя");
                 return StatusCode(500, new { message = "Внутренняя ошибка сервера" });
             }
         }
 
-
-        [HttpGet("public-profile-nickname")]
-        public async Task<IActionResult> GetPublicProfileByName(string nickname)
-        {
-            try
-            {
-                
-                var user = await _userService.GetUserByNameAsync(nickname);
-
-                if (user == null)
-                {
-                    return NotFound(new { message = "Пользователь не найден" });
-                }
-
-                return Ok(new UserPublicProfileDto
-                {
-                    Id = user.Id,
-                    Nickname = user.Nickname,
-                    ProfileDescription = user.ProfileDescription,
-                    ProfileImage = user.ProfileImage,
-                    RegistrationDate = user.RegistrationDate,
-                    IsOnline = user.IsOnline,
-                    CurrentStream = user.CurrentStream
-
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Ошибка при получении профиля пользователя");
-                return StatusCode(500, new { message = "Внутренняя ошибка сервера" });
-            }
-        }
-
-        [HttpGet("public-profile-id")]
-        public async Task<IActionResult> GetPublicProfileById(int userId)
-        {
-            try
-            {
-
-                var user = await _userService.GetUserByIdAsync(userId);
-
-                if (user == null)
-                {
-                    return NotFound(new { message = "Пользователь не найден" });
-                }
-
-                return Ok(new UserPublicProfileDto
-                {
-                    Id = user.Id,
-                    Nickname = user.Nickname,
-                    ProfileDescription = user.ProfileDescription,
-                    ProfileImage = user.ProfileImage,
-                    RegistrationDate = user.RegistrationDate,
-                    IsOnline = user.IsOnline,
-                    CurrentStream = user.CurrentStream
-
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Ошибка при получении профиля пользователя");
-                return StatusCode(500, new { message = "Внутренняя ошибка сервера" });
-            }
-        }
-
+        /// <summary>
+        /// Обновление профиля текущего пользователя.
+        /// </summary>
+        /// <param name="dto">Данные для обновления (частичные — null поля игнорируются).</param>
+        /// <response code="200">Профиль успешно обновлён.</response>
+        /// <response code="400">Неверные данные.</response>
+        /// <response code="401">Не авторизован.</response>
+        /// <response code="500">Внутренняя ошибка сервера.</response>
         [Authorize]
         [HttpPut("profile")]
-        public async Task<IActionResult> UpdateProfile([FromBody] UserUpdateDataDto updateDto)
+        public async Task<IActionResult> UpdateMyProfile([FromBody] UserUpdateDataDto dto)
         {
+            if (!ModelState.IsValid) return BadRequest(ModelState);
+
             try
             {
-                if (!ModelState.IsValid)
-                {
-                    return BadRequest(ModelState);
-                }
-
                 var userId = GetCurrentUserId();
-
-                await _userService.UpdateUserProfileAsync(userId, updateDto);
-
-                return Ok(new { message = "Профиль успешно обновлен" });
+                await _userService.UpdateUserProfileAsync(userId, dto);
+                return Ok(new { message = "Профиль успешно обновлён" });
             }
             catch (ArgumentException ex)
             {
+                _logger.LogWarning("Ошибка при обновлении профиля пользователя {UserId}: {Message}", GetCurrentUserIdSafe(), ex.Message);
                 return BadRequest(new { message = ex.Message });
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return Unauthorized(new { message = "Неверный токен авторизации" });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Ошибка при обновлении профиля пользователя");
+                _logger.LogError(ex, "Ошибка при обновлении профиля пользователя {UserId}", GetCurrentUserIdSafe());
                 return StatusCode(500, new { message = "Внутренняя ошибка сервера" });
             }
         }
 
-
-        //[HttpPut]
-
-        //[HttpPatch]
-
+        /// <summary>
+        /// Пересоздать StreamKey для текущего пользователя.
+        /// </summary>
+        /// <response code="200">Возвращает новый streamKey.</response>
+        /// <response code="401">Не авторизован.</response>
+        /// <response code="404">Пользователь не найден.</response>
+        /// <response code="500">Внутренняя ошибка сервера.</response>
         [Authorize]
         [HttpPost("stream-key/regenerate")]
         public async Task<IActionResult> RegenerateStreamKey()
@@ -242,201 +225,143 @@ namespace StreamPlatformBackend.Controllers
             try
             {
                 var userId = GetCurrentUserId();
-                var newStreamKey = await _userService.RegenerateStreamKeyAsync(userId);
-
-                return Ok(new
-                {
-                    message = "StreamKey успешно пересоздан",
-                    streamKey = newStreamKey
-                });
+                var newKey = await _userService.RegenerateStreamKeyAsync(userId);
+                return Ok(new { streamKey = newKey });
             }
             catch (ArgumentException ex)
             {
+                _logger.LogWarning("Ошибка при пересоздании streamKey для {UserId}: {Message}", GetCurrentUserIdSafe(), ex.Message);
                 return BadRequest(new { message = ex.Message });
             }
-            catch (InvalidOperationException ex)
+            catch (UnauthorizedAccessException)
             {
-                return BadRequest(new { message = ex.Message });
-            }
-            catch (ApplicationException ex)
-            {
-                _logger.LogError(ex, "Ошибка при пересоздании StreamKey для пользователя {UserId}", GetCurrentUserId());
-                return StatusCode(500, new { message = ex.Message });
+                return Unauthorized(new { message = "Неверный токен авторизации" });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Неожиданная ошибка при пересоздании StreamKey для пользователя {UserId}", GetCurrentUserId());
+                _logger.LogError(ex, "Ошибка при пересоздании streamKey для {UserId}", GetCurrentUserIdSafe());
                 return StatusCode(500, new { message = "Внутренняя ошибка сервера" });
             }
         }
 
+        /// <summary>
+        /// Получить текущий streamKey (только для авторизованного пользователя).
+        /// </summary>
+        /// <response code="200">Возвращает streamKey.</response>
+        /// <response code="401">Не авторизован.</response>
+        /// <response code="404">Пользователь не найден.</response>
         [Authorize]
         [HttpGet("stream-key")]
-        public async Task<IActionResult> GetUserStreamKey()
+        public async Task<IActionResult> GetMyStreamKey()
         {
             try
             {
                 var userId = GetCurrentUserId();
                 var user = await _userService.GetUserByIdAsync(userId);
+                if (user == null) return NotFound(new { message = "Пользователь не найден" });
 
-                if (user == null)
-                {
-                    return NotFound(new { message = "Пользователь не найден" });
-                }
-
-                return Ok(new
-                {
-                    streamKey = user.StreamKey,
-                });
+                return Ok(new { streamKey = user.StreamKey });
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return Unauthorized(new { message = "Неверный токен авторизации" });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Ошибка при получении StreamKey для пользователя {UserId}", GetCurrentUserId());
+                _logger.LogError(ex, "Ошибка при получении streamKey для {UserId}", GetCurrentUserIdSafe());
                 return StatusCode(500, new { message = "Внутренняя ошибка сервера" });
             }
         }
 
-        private int GetCurrentUserId()
-        {
-            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-
-            if (int.TryParse(userIdClaim, out int userId) && userId > 0)
-            {
-                return userId;
-            }
-
-            throw new UnauthorizedAccessException("Невалидный ID пользователя");
-        }
-
-
-        [HttpGet("online-users")]
-        public async Task<ActionResult<IEnumerable<OnlineUserListDto>>> GetActiveStreams()
+        /// <summary>
+        /// Получить список онлайн-стримеров (публичный).
+        /// </summary>
+        [HttpGet("online/streamers")]
+        public async Task<IActionResult> GetOnlineStreamers()
         {
             try
             {
-                var activeStreams = await _userService.GetOnlineStreamersAsync();
-                return Ok(activeStreams);
+                var list = await _userService.GetOnlineStreamersAsync();
+                return Ok(list);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Ошибка при получении активных стримов");
-                return StatusCode(500, "Произошла ошибка при получении данных");
+                _logger.LogError(ex, "Ошибка при получении списка онлайн-стримеров");
+                return StatusCode(500, new { message = "Внутренняя ошибка сервера" });
             }
         }
 
-        [HttpGet("online-users/count")]
-        public async Task<ActionResult<int>> GetActiveStreamsCount()
+        /// <summary>
+        /// Получить количество онлайн-пользователей (публичный).
+        /// </summary>
+        [HttpGet("online/count")]
+        public async Task<IActionResult> GetOnlineUsersCount()
         {
             try
             {
                 var count = await _userService.GetOnlineUsersCountAsync();
-                return Ok(count);
+                return Ok(new { count });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Ошибка при получении количества активных стримов");
-                return StatusCode(500, "Произошла ошибка при получении данных");
+                _logger.LogError(ex, "Ошибка при подсчёте онлайн-пользователей");
+                return StatusCode(500, new { message = "Внутренняя ошибка сервера" });
             }
         }
 
-
-        [HttpGet("{userId}/subscriptions")]
-        public async Task<ActionResult<IEnumerable<OnlineUserListDto>>> GetUserSubscriptions(int userId)
+        /// <summary>
+        /// Проверка существования email (публичный — удобен для валидации на клиенте).
+        /// </summary>
+        [HttpGet("exists/email/{email}")]
+        public async Task<IActionResult> CheckEmail(string email)
         {
             try
             {
-                var subscriptions = await _userService.GetUserSubscriptionsAsync(userId);
-                return Ok(subscriptions);
+                var exists = await _userService.EmailExistsAsync(email);
+                return Ok(new { exists });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Ошибка при получении подписок пользователя {UserId}", userId);
-                return StatusCode(500, "Произошла ошибка при получении данных");
+                _logger.LogError(ex, "Ошибка при проверке существования email {Email}", email);
+                return StatusCode(500, new { message = "Внутренняя ошибка сервера" });
             }
         }
 
-
-
-        [HttpPost("subscribe/{targetUserId}")]
-        [Authorize] // ← Требуем авторизацию
-        public async Task<ActionResult> SubscribeToUser(int targetUserId)
+        /// <summary>
+        /// Проверка существования никнейма (публичный).
+        /// </summary>
+        [HttpGet("exists/nickname/{nickname}")]
+        public async Task<IActionResult> CheckNickname(string nickname)
         {
-            // Получаем ID текущего авторизованного пользователя из токена
-            var subscriberId = GetCurrentUserIdFromToken();
-
             try
             {
-                var result = await _userService.SubscribeToUserAsync(subscriberId, targetUserId);
-
-                if (!result)
-                {
-                    return BadRequest("Не удалось выполнить подписку");
-                }
-
-                return Ok(new { message = "Подписка успешно оформлена" });
+                var exists = await _userService.NicknameExistsAsync(nickname);
+                return Ok(new { exists });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Ошибка при подписке пользователя {SubscriberId} на {TargetUserId}",
-                    subscriberId, targetUserId);
-                return StatusCode(500, "Произошла ошибка при выполнении подписки");
+                _logger.LogError(ex, "Ошибка при проверке существования никнейма {Nickname}", nickname);
+                return StatusCode(500, new { message = "Внутренняя ошибка сервера" });
             }
         }
 
-        [HttpDelete("unsubscribe/{targetUserId}")]
-        [Authorize] // ← Требуем авторизацию
-        public async Task<ActionResult> UnsubscribeFromUser(int targetUserId)
-        {
-            var subscriberId = GetCurrentUserIdFromToken();
-
-            try
-            {
-                var result = await _userService.UnsubscribeFromUserAsync(subscriberId, targetUserId);
-
-                if (!result)
-                {
-                    return BadRequest("Не удалось отписаться");
-                }
-
-                return Ok(new { message = "Подписка успешно отменена" });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Ошибка при отписке пользователя {SubscriberId} от {TargetUserId}",
-                    subscriberId, targetUserId);
-                return StatusCode(500, "Произошла ошибка при отписке");
-            }
-        }
-
-        [HttpGet("is-subscribed/{targetUserId}")]
-        [Authorize]
-        public async Task<ActionResult<bool>> IsSubscribed(int targetUserId)
-        {
-            var currentUserId = GetCurrentUserIdFromToken();
-
-            try
-            {
-                var isSubscribed = await _userService.IsSubscribedAsync(currentUserId, targetUserId);
-                return Ok(isSubscribed);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Ошибка при проверке подписки {CurrentUserId} на {TargetUserId}",
-                    currentUserId, targetUserId);
-                return StatusCode(500, "Произошла ошибка при проверке подписки");
-            }
-        }
-
-        // Метод для получения ID текущего пользователя из JWT токена
-        private int GetCurrentUserIdFromToken()
+        // -------------------------
+        // Helpers
+        // -------------------------
+        private int GetCurrentUserId()
         {
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (string.IsNullOrEmpty(userIdClaim) || !int.TryParse(userIdClaim, out var userId))
-            {
+            if (string.IsNullOrEmpty(userIdClaim) || !int.TryParse(userIdClaim, out var id))
                 throw new UnauthorizedAccessException("Неверный токен авторизации");
-            }
-            return userId;
+            return id;
         }
 
+        // Возвращает id если он есть, иначе -1 (для логирования в catch-блоках)
+        private int GetCurrentUserIdSafe()
+        {
+            var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            if (int.TryParse(userIdClaim, out var id)) return id;
+            return -1;
+        }
     }
 }

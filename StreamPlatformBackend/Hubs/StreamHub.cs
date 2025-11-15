@@ -1,17 +1,20 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
 using StreamPlatformBackend.Services;
-using System.Collections.Concurrent;
 using System.Security.Claims;
 
 namespace StreamPlatformBackend.Hubs
 {
+    /// <summary>
+    /// SignalR хаб для работы со стримами:
+    /// - Подключение к стриму
+    /// - Уведомления о начале/конце стрима для подписчиков
+    /// </summary>
     public class StreamHub : Hub
     {
         private readonly IStreamService _streamService;
         private readonly IUserService _userService;
         private readonly ILogger<StreamHub> _logger;
-        private static readonly ConcurrentDictionary<int, string> _userConnections = new();
 
         public StreamHub(IStreamService streamService, IUserService userService, ILogger<StreamHub> logger)
         {
@@ -20,83 +23,85 @@ namespace StreamPlatformBackend.Hubs
             _logger = logger;
         }
 
-        // Подключение к хабу конкретного стрима
+        /// <summary>
+        /// Пользователь присоединяется к конкретному стриму (любой, авторизация не нужна)
+        /// </summary>
         public async Task JoinStream(string streamerUsername)
         {
-            try
+            var streamer = await _userService.GetUserByNameAsync(streamerUsername);
+            if (streamer == null)
             {
-                var streamer = await _userService.GetUserByNameAsync(streamerUsername);
-                if (streamer == null)
-                {
-                    await Clients.Caller.SendAsync("Error", "Streamer not found");
-                    return;
-                }
-
-                // Добавляем connection в группу стрима
-                await Groups.AddToGroupAsync(Context.ConnectionId, $"stream_{streamer.Id}");
-
-                // Получаем информацию о стриме
-                var streamInfo = await _streamService.GetStreamInfoAsync(streamer.Id);
-
-                await Clients.Caller.SendAsync("StreamJoined", streamInfo);
-
-                _logger.LogInformation("User {ConnectionId} joined stream {StreamerId}", Context.ConnectionId, streamer.Id);
+                await Clients.Caller.SendAsync("Error", "Streamer not found");
+                return;
             }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error joining stream {StreamerUsername}", streamerUsername);
-                await Clients.Caller.SendAsync("Error", "Failed to join stream");
-            }
+
+            // Подключаем к группе стрима
+            await Groups.AddToGroupAsync(Context.ConnectionId, $"stream_{streamer.Id}");
+
+            var streamInfo = await _streamService.GetStreamInfoAsync(streamer.Id);
+            await Clients.Caller.SendAsync("StreamJoined", streamInfo);
+
+            _logger.LogInformation("User {ConnectionId} joined stream {StreamerId}", Context.ConnectionId, streamer.Id);
         }
 
-        // Покидание стрима
+        /// <summary>
+        /// Пользователь покидает стрим
+        /// </summary>
         public async Task LeaveStream(string streamerUsername)
         {
-            try
+            var streamer = await _userService.GetUserByNameAsync(streamerUsername);
+            if (streamer != null)
             {
-                var streamer = await _userService.GetUserByNameAsync(streamerUsername);
-                if (streamer != null)
-                {
-                    await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"stream_{streamer.Id}");
-                    _logger.LogInformation("User {ConnectionId} left stream {StreamerId}", Context.ConnectionId, streamer.Id);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error leaving stream {StreamerUsername}", streamerUsername);
+                await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"stream_{streamer.Id}");
+                _logger.LogInformation("User {ConnectionId} left stream {StreamerId}", Context.ConnectionId, streamer.Id);
             }
         }
 
-        // Подписка на уведомления о начале стримов от подписанных стримеров
-        public async Task SubscribeToStreamNotifications()
+        /// <summary>
+        /// Подписка на уведомления о стримах от подписанных стримеров
+        /// Авторизация обязательна
+        /// </summary>
+        [Authorize]
+        public async Task SubscribeToMySubscriptions()
         {
-            try
-            {
-                var userId = GetCurrentUserId();
-                if (userId > 0)
-                {
-                    // Добавляем connection в группу уведомлений пользователя
-                    await Groups.AddToGroupAsync(Context.ConnectionId, $"notifications_{userId}");
+            var userId = GetCurrentUserId();
+            if (userId <= 0) return;
 
-                    // Сохраняем связь пользователя с connection
-                    _userConnections[userId] = Context.ConnectionId;
+            // Получаем список стримеров, на которых подписан пользователь
+            var subscriptions = await _userService.GetSubscribedStreamerIdsAsync(userId);
 
-                    _logger.LogInformation("User {UserId} subscribed to stream notifications", userId);
-                }
-            }
-            catch (Exception ex)
+            foreach (var streamerId in subscriptions)
             {
-                _logger.LogError(ex, "Error subscribing to stream notifications");
+                // Добавляем текущее подключение в группу каждого стримера
+                await Groups.AddToGroupAsync(Context.ConnectionId, $"notifications_{streamerId}");
             }
+
+            _logger.LogInformation("User {UserId} subscribed to notifications for {Count} streamers", userId, subscriptions.Count);
         }
 
-        // Вызывается когда пользователь соединяется
+        /// <summary>
+        /// Отписка от уведомлений
+        /// </summary>
+        [Authorize]
+        public async Task UnsubscribeFromStreamer(int streamerId)
+        {
+            var userId = GetCurrentUserId();
+            if (userId <= 0) return;
+
+            // Удаляем подключение из группы стримера
+            await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"notifications_{streamerId}");
+
+            _logger.LogInformation("User {UserId} unsubscribed from notifications of streamer {StreamerId}", userId, streamerId);
+        }
+
+        /// <summary>
+        /// При подключении помечаем пользователя онлайн (если авторизован)
+        /// </summary>
         public override async Task OnConnectedAsync()
         {
             var userId = GetCurrentUserId();
             if (userId > 0)
             {
-                _userConnections.AddOrUpdate(userId, Context.ConnectionId, (key, oldValue) => Context.ConnectionId);
                 await _userService.UpdateUserOnlineStatusAsync(userId, true);
                 _logger.LogInformation("User {UserId} connected to StreamHub", userId);
             }
@@ -104,13 +109,14 @@ namespace StreamPlatformBackend.Hubs
             await base.OnConnectedAsync();
         }
 
-        // Вызывается когда пользователь отсоединяется
+        /// <summary>
+        /// При отключении помечаем пользователя оффлайн
+        /// </summary>
         public override async Task OnDisconnectedAsync(Exception? exception)
         {
             var userId = GetCurrentUserId();
             if (userId > 0)
             {
-                _userConnections.TryRemove(userId, out _);
                 await _userService.UpdateUserOnlineStatusAsync(userId, false);
                 _logger.LogInformation("User {UserId} disconnected from StreamHub", userId);
             }
@@ -118,14 +124,13 @@ namespace StreamPlatformBackend.Hubs
             await base.OnDisconnectedAsync(exception);
         }
 
+        /// <summary>
+        /// Получаем текущий ID пользователя из Claims
+        /// </summary>
         private int GetCurrentUserId()
         {
             var userIdClaim = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            if (int.TryParse(userIdClaim, out int userId))
-            {
-                return userId;
-            }
-            return 0;
+            return int.TryParse(userIdClaim, out int userId) ? userId : 0;
         }
     }
 }

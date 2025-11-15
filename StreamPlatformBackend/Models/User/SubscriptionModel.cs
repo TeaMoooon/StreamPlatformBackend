@@ -7,14 +7,13 @@ namespace StreamPlatformBackend.Models.User
     {
         public int SubscriberId { get; set; }
         public int TargetUserId { get; set; }
+
         public DateTime SubscriptionDate { get; set; } = DateTime.UtcNow;
 
-        [JsonIgnore]
-        [ForeignKey("SubscriberId")]
+        [JsonIgnore, ForeignKey(nameof(SubscriberId))]
         public virtual UserModel Subscriber { get; set; } = null!;
 
-        [JsonIgnore]
-        [ForeignKey("TargetUserId")]
+        [JsonIgnore, ForeignKey(nameof(TargetUserId))]
         public virtual UserModel TargetUser { get; set; } = null!;
     }
 }

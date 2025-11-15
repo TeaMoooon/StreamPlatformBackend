@@ -15,15 +15,9 @@ namespace StreamPlatformBackend.Services
         Task<bool> ValidateStreamKeyAsync(string streamKey);
         Task<bool> IsUserStreamingAsync(int userId);
         Task<int> IncrementViewCountAsync(int streamId);
-
-
-
-
-
         Task<StreamModel?> GetStreamByUserIdAsync(int userId);
     }
 
-    // Services/StreamService.cs
     public class StreamService : IStreamService
     {
         private readonly AppDbContext _context;
@@ -39,153 +33,110 @@ namespace StreamPlatformBackend.Services
 
         public async Task<StreamModel> StartStreamAsync(int userId, string streamKey)
         {
-            try
+            var user = await _context.Users
+                .Include(u => u.CurrentStream)
+                .FirstOrDefaultAsync(u => u.Id == userId);
+
+            if (user == null)
+                throw new ArgumentException($"User with ID {userId} not found");
+
+            if (user.StreamKey != streamKey)
+                throw new UnauthorizedAccessException("Invalid stream key");
+
+            if (user.CurrentStream != null && user.CurrentStream.EndedAt == null)
+                return user.CurrentStream; // уже идёт стрим
+
+            var stream = new StreamModel
             {
-                _logger.LogInformation("Starting stream for user {UserId} with key {StreamKey}", userId, streamKey);
+                UserId = user.Id,
+                StreamName = user.LastStreamName ?? $"{user.Nickname}'s Stream",
+                Tags = user.LastTags ?? new List<string>(),
+                PreviewUrl = user.LastPreviewUrl,
+                StartedAt = DateTime.UtcNow,
+                TotalViews = 0
+            };
 
-                var user = await _context.Users
-                    .Include(u => u.CurrentStream)
-                    //.ThenInclude(s => s.Category)
-                    .FirstOrDefaultAsync(u => u.Id == userId);
+            _context.Streams.Add(stream);
+            user.CurrentStream = stream;
+            user.IsOnline = true;
 
-                if (user == null)
-                    throw new ArgumentException($"User with ID {userId} not found");
+            await _context.SaveChangesAsync();
 
-                if (user.StreamKey != streamKey)
-                    throw new UnauthorizedAccessException("Invalid stream key");
+            // 🔔 Уведомления о старте стрима подписчикам
+            await _notificationService.NotifyStreamStartedAsync(stream);
 
-                // Если стрим уже активен, возвращаем его
-                if (user.CurrentStream != null && user.CurrentStream.EndedAt == null)
-                {
-                    _logger.LogWarning("Stream already active for user {UserId}", userId);
-                    return user.CurrentStream;
-                }
-
-                // Создаем новый стрим
-                var stream = new StreamModel
-                {
-                    UserId = user.Id,
-                    StreamName = user.LastStreamName ?? $"{user.Nickname}'s Stream",
-                    //CategoryId = user.LastCategoryId ?? await GetDefaultCategoryIdAsync(),
-                    Tags = user.LastTags ?? Array.Empty<string>(),
-                    PreviewlUrl = user.LastPreviewlUrl,
-                    StartedAt = DateTime.UtcNow,
-                    EndedAt = null,
-                    TotalViews = 0
-                };
-
-                _context.Streams.Add(stream);
-                user.CurrentStream = stream;
-                user.IsOnline = true;
-
-                await _context.SaveChangesAsync();
-
-                // 🔥 ОТПРАВЛЯЕМ УВЕДОМЛЕНИЯ О НАЧАЛЕ СТРИМА
-                await _notificationService.NotifyStreamStartedAsync(userId, stream);
-
-                _logger.LogInformation("Stream started successfully for user {UserId}. Stream ID: {StreamId}",
-                    userId, stream.Id);
-
-                return stream;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error starting stream for user {UserId}", userId);
-                throw;
-            }
+            return stream;
         }
 
         public async Task<bool> EndStreamAsync(int userId, string streamKey)
-        {
-            try
-            {
-                _logger.LogInformation("Ending stream for user {UserId}", userId);
-
-                var user = await _context.Users
-                    .Include(u => u.CurrentStream)
-                    .FirstOrDefaultAsync(u => u.Id == userId);
-
-                if (user?.CurrentStream == null || user.StreamKey != streamKey)
-                {
-                    _logger.LogWarning("No active stream found for user {UserId} or invalid stream key", userId);
-                    return false;
-                }
-
-                user.CurrentStream.EndedAt = DateTime.UtcNow;
-                user.IsOnline = false;
-
-                // Сохраняем последние настройки для будущих стримов
-                user.LastStreamName = user.CurrentStream.StreamName;
-                //user.LastCategoryId = user.CurrentStream.CategoryId;
-                user.LastTags = user.CurrentStream.Tags;
-                user.LastPreviewlUrl = user.CurrentStream.PreviewlUrl;
-
-                await _context.SaveChangesAsync();
-
-                _logger.LogInformation("Stream ended successfully for user {UserId}. Stream duration: {Duration}",
-                    userId, DateTime.UtcNow - user.CurrentStream.StartedAt);
-
-                await _notificationService.NotifyStreamEndedAsync(userId);
-
-                return true;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error ending stream for user {UserId}", userId);
-                return false;
-            }
-        }
-
-        public async Task<bool> UpdateStreamAsync(int userId, StreamUpdateDto updateDto)
-        {
-            try
-            {
-                var user = await _context.Users
-                    .Include(u => u.CurrentStream)
-                    .FirstOrDefaultAsync(u => u.Id == userId);
-
-                if (user?.CurrentStream == null)
-                    return false;
-
-                var stream = user.CurrentStream;
-
-                if (!string.IsNullOrEmpty(updateDto.StreamName))
-                    stream.StreamName = updateDto.StreamName;
-                /*
-                if (updateDto.CategoryId.HasValue)
-                {
-                    var categoryExists = await _context.StreamCategories
-                        .AnyAsync(c => c.Id == updateDto.CategoryId.Value);
-                    if (categoryExists)
-                        stream.CategoryId = updateDto.CategoryId.Value;
-                }*/
-
-                if (updateDto.Tags != null)
-                    stream.Tags = updateDto.Tags;
-
-                if (updateDto.PreviewlUrl != null)
-                    stream.PreviewlUrl = updateDto.PreviewlUrl;
-
-                await _context.SaveChangesAsync();
-                return true;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error updating stream for user {UserId}", userId);
-                return false;
-            }
-        }
-
-        public async Task<StreamInfoDto?> GetStreamInfoAsync(int userId)
         {
             var user = await _context.Users
                 .Include(u => u.CurrentStream)
                 .FirstOrDefaultAsync(u => u.Id == userId);
 
-            if (user?.CurrentStream == null || user.CurrentStream.EndedAt != null)
-                return null;
+            if (user?.CurrentStream == null || user.StreamKey != streamKey)
+                return false;
 
-            return MapToStreamInfoDto(user.CurrentStream, user);
+            user.CurrentStream.EndedAt = DateTime.UtcNow;
+            user.IsOnline = false;
+
+            // Сохраняем последние настройки
+            user.LastStreamName = user.CurrentStream.StreamName;
+            user.LastTags = user.CurrentStream.Tags;
+            user.LastPreviewUrl = user.CurrentStream.PreviewUrl;
+
+            await _context.SaveChangesAsync();
+
+            // 🔔 Уведомления о завершении стрима подписчикам
+            await _notificationService.NotifyStreamEndedAsync(user.CurrentStream);
+
+            return true;
+        }
+
+
+        public async Task<bool> UpdateStreamAsync(int userId, StreamUpdateDto updateDto)
+        {
+            var stream = (await _context.Users
+                .Include(u => u.CurrentStream)
+                .FirstOrDefaultAsync(u => u.Id == userId))
+                ?.CurrentStream;
+
+            if (stream == null) return false;
+
+            if (!string.IsNullOrEmpty(updateDto.StreamName))
+                stream.StreamName = updateDto.StreamName;
+
+            if (updateDto.Tags != null)
+                stream.Tags = updateDto.Tags;
+
+            if (!string.IsNullOrEmpty(updateDto.PreviewUrl))
+                stream.PreviewUrl = updateDto.PreviewUrl;
+
+            await _context.SaveChangesAsync();
+            return true;
+        }
+
+        public async Task<StreamInfoDto?> GetStreamInfoAsync(int userId)
+        {
+            var user = await _context.Users.Include(u => u.CurrentStream)
+                .FirstOrDefaultAsync(u => u.Id == userId);
+
+            var stream = user?.CurrentStream;
+            if (stream == null || stream.EndedAt != null) return null;
+
+            return new StreamInfoDto
+            {
+                StreamId = stream.Id,
+                StreamName = stream.StreamName,
+                StreamerName = user.Nickname,
+                StreamerId = user.Id,
+                Tags = stream.Tags,
+                PreviewUrl = stream.PreviewUrl,
+                HlsUrl = $"/hls/{user.StreamKey}.m3u8",
+                TotalViews = stream.TotalViews,
+                StartedAt = stream.StartedAt,
+                IsLive = stream.EndedAt == null
+            };
         }
 
         public async Task<bool> ValidateStreamKeyAsync(string streamKey)
@@ -193,16 +144,12 @@ namespace StreamPlatformBackend.Services
             if (!TryParseUserIdFromStreamKey(streamKey, out int userId))
                 return false;
 
-            var user = await _context.Users
-                .FirstOrDefaultAsync(u => u.Id == userId && u.StreamKey == streamKey);
-
-            return user != null;
+            return await _context.Users.AnyAsync(u => u.Id == userId && u.StreamKey == streamKey);
         }
 
         public async Task<bool> IsUserStreamingAsync(int userId)
         {
-            var user = await _context.Users
-                .Include(u => u.CurrentStream)
+            var user = await _context.Users.Include(u => u.CurrentStream)
                 .FirstOrDefaultAsync(u => u.Id == userId);
 
             return user?.IsOnline == true && user.CurrentStream?.EndedAt == null;
@@ -211,67 +158,25 @@ namespace StreamPlatformBackend.Services
         public async Task<int> IncrementViewCountAsync(int streamId)
         {
             var stream = await _context.Streams.FindAsync(streamId);
-            if (stream == null)
-                return 0;
+            if (stream == null) return 0;
 
             stream.TotalViews++;
             await _context.SaveChangesAsync();
-
             return stream.TotalViews;
         }
 
-        // Вспомогательные методы
-        /*
-        private async Task<int> GetDefaultCategoryIdAsync()
+        public async Task<StreamModel?> GetStreamByUserIdAsync(int userId)
         {
-            var defaultCategory = await _context.StreamCategories
-                .FirstOrDefaultAsync(c => c.Name == "Just Chatting");
-
-            return defaultCategory?.Id ?? 1; // Fallback to ID 1
-        }/*/
+            return await _context.Streams.Include(s => s.User)
+                .FirstOrDefaultAsync(s => s.UserId == userId && s.EndedAt == null);
+        }
 
         private bool TryParseUserIdFromStreamKey(string streamKey, out int userId)
         {
             userId = 0;
-            if (string.IsNullOrEmpty(streamKey) || !streamKey.StartsWith("live_"))
-                return false;
-
+            if (string.IsNullOrEmpty(streamKey) || !streamKey.StartsWith("live_")) return false;
             var parts = streamKey.Split('_');
-            if (parts.Length >= 2 && int.TryParse(parts[1], out userId))
-                return true;
-
-            return false;
+            return parts.Length >= 2 && int.TryParse(parts[1], out userId);
         }
-
-        private StreamInfoDto MapToStreamInfoDto(StreamModel stream, UserModel user)
-        {
-            return new StreamInfoDto
-            {
-                StreamId = stream.Id,
-                StreamName = stream.StreamName,
-                StreamerName = user.Nickname,
-                StreamerId = user.Id,
-                //Category = stream.Category?.Name ?? "Unknown",
-                Tags = stream.Tags,
-                PreviewlUrl = stream.PreviewlUrl,
-                HlsUrl = $"/hls/{user.StreamKey}.m3u8",
-                TotalViews = stream.TotalViews,
-                StartedAt = stream.StartedAt,
-                IsLive = stream.EndedAt == null
-            };
-        }
-
-
-
-
-        // Добавим новый метод
-        public async Task<StreamModel?> GetStreamByUserIdAsync(int userId)
-        {
-            return await _context.Streams
-                .Include(s => s.User)
-                .FirstOrDefaultAsync(s => s.UserId == userId && s.EndedAt == null);
-        }
-
-
     }
 }
