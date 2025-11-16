@@ -109,6 +109,11 @@ builder.Services.AddCors(options =>
 // WebSocket / SignalR
 builder.Services.AddSignalR();
 
+
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+builder.Logging.SetMinimumLevel(LogLevel.Debug);
+
 var app = builder.Build();
 
 // ⭐ Swagger и DevExceptionPage только на Development ⭐
