@@ -153,17 +153,27 @@ namespace StreamPlatformBackend.Hubs
         /// </summary>
         public override async Task OnDisconnectedAsync(Exception? exception)
         {
+            (int StreamerId, string ViewerKey) info;
+
             lock (StreamViewers)
             {
-                if (ConnectionMap.TryGetValue(Context.ConnectionId, out var info))
+                // Проверяем, есть ли запись для этого подключения
+                if (!ConnectionMap.TryGetValue(Context.ConnectionId, out info))
                 {
-                    if (StreamViewers.TryGetValue(info.StreamerId, out var viewers))
-                    {
-                        viewers.Remove(info.ViewerKey);
-                        _ = Clients.Group($"stream_{info.StreamerId}").SendAsync("UpdateViewerCount", viewers.Count);
-                    }
+                    return; // пользователь не был в стриме
+                }
 
-                    ConnectionMap.Remove(Context.ConnectionId);
+                // Удаляем соединение из карты
+                ConnectionMap.Remove(Context.ConnectionId);
+
+                // Удаляем зрителя из списка уникальных
+                if (StreamViewers.TryGetValue(info.StreamerId, out var viewers))
+                {
+                    viewers.Remove(info.ViewerKey);
+
+                    // Отправляем обновлённый счётчик
+                    _ = Clients.Group($"stream_{info.StreamerId}")
+                        .SendAsync("UpdateViewerCount", viewers.Count);
                 }
             }
 

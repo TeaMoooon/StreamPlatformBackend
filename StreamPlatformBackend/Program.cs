@@ -150,6 +150,6 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
-app.MapHub<StreamHub>("/streamHub");
+app.MapHub<StreamHub>("/hubs/streamHub");
 
 app.Run();
