@@ -38,38 +38,62 @@ namespace StreamPlatformBackend.Hubs
         /// <param name="sessionId">Идентификатор сессии для гостей</param>
         public async Task JoinStream(string streamerUsername, string sessionId = null)
         {
-            var streamer = await _userService.GetUserByNameAsync(streamerUsername);
-            if (streamer == null)
+            try
             {
-                await Clients.Caller.SendAsync("Error", "Streamer not found");
-                return;
+                var streamer = await _userService.GetUserByNameAsync(streamerUsername);
+                if (streamer == null)
+                {
+                    await Clients.Caller.SendAsync("Error", "Streamer not found");
+                    return;
+                }
+
+                await Groups.AddToGroupAsync(Context.ConnectionId, $"stream_{streamer.Id}");
+
+                string viewerKey;
+                var userId = GetCurrentUserId();
+                if (userId > 0)
+                    viewerKey = $"user_{userId}";
+                else
+                    viewerKey = sessionId ?? Context.ConnectionId;
+
+                // Потокобезопасное добавление
+                lock (StreamViewers)
+                {
+                    if (!StreamViewers.ContainsKey(streamer.Id))
+                        StreamViewers[streamer.Id] = new HashSet<string>();
+                    StreamViewers[streamer.Id].Add(viewerKey);
+
+                    ConnectionMap[Context.ConnectionId] = (streamer.Id, viewerKey);
+                }
+
+                // Отправляем обновлённое количество зрителей
+                var count = StreamViewers[streamer.Id].Count;
+                await Clients.Group($"stream_{streamer.Id}").SendAsync("UpdateViewerCount", count);
+
+                // Получаем информацию о стриме
+                var streamInfo = await _streamService.GetStreamInfoAsync(streamer.Id);
+                if (streamInfo != null)
+                {
+                    await Clients.Caller.SendAsync("StreamJoined", streamInfo);
+                }
+                else
+                {
+                    // Если стрим ещё не начался, отправляем заглушку
+                    await Clients.Caller.SendAsync("StreamJoined", new
+                    {
+                        IsLive = false,
+                        StreamerId = streamer.Id,
+                        StreamerName = streamer.Nickname
+                    });
+                }
+
+                _logger.LogInformation("Viewer {ViewerKey} joined stream {StreamerId}", viewerKey, streamer.Id);
             }
-
-            await Groups.AddToGroupAsync(Context.ConnectionId, $"stream_{streamer.Id}");
-
-            string viewerKey;
-            var userId = GetCurrentUserId();
-            if (userId > 0)
-                viewerKey = $"user_{userId}";
-            else
-                viewerKey = sessionId ?? Context.ConnectionId;
-
-            lock (StreamViewers)
+            catch (Exception ex)
             {
-                if (!StreamViewers.ContainsKey(streamer.Id))
-                    StreamViewers[streamer.Id] = new HashSet<string>();
-                StreamViewers[streamer.Id].Add(viewerKey);
-
-                ConnectionMap[Context.ConnectionId] = (streamer.Id, viewerKey);
+                _logger.LogError(ex, "Error in JoinStream for streamer {StreamerUsername}", streamerUsername);
+                await Clients.Caller.SendAsync("Error", "Failed to join stream: " + ex.Message);
             }
-
-            var count = StreamViewers[streamer.Id].Count;
-            await Clients.Group($"stream_{streamer.Id}").SendAsync("UpdateViewerCount", count);
-
-            var streamInfo = await _streamService.GetStreamInfoAsync(streamer.Id);
-            await Clients.Caller.SendAsync("StreamJoined", streamInfo);
-
-            _logger.LogInformation("Viewer {ViewerKey} joined stream {StreamerId}", viewerKey, streamer.Id);
         }
 
         /// <summary>
