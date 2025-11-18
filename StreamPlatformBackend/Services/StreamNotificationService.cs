@@ -2,6 +2,7 @@
 using StreamPlatformBackend.Hubs;
 using StreamPlatformBackend.Models.Stream;
 
+
 namespace StreamPlatformBackend.Services
 {
     /// <summary>
@@ -11,56 +12,68 @@ namespace StreamPlatformBackend.Services
     {
         Task NotifyStreamStartedAsync(StreamModel stream);
         Task NotifyStreamEndedAsync(StreamModel stream);
+        Task NotifyStreamerSubscribersAsync(int streamerId, string message);
+        Task NotifyUserAsync(int userId, string message, string type = "info");
     }
+
 
     public class StreamNotificationService : IStreamNotificationService
     {
-        private readonly IHubContext<StreamHub> _hubContext;
-        private readonly ILogger<StreamNotificationService> _logger;
+        private readonly IHubContext<NotificationHub> _hub;
 
-        public StreamNotificationService(IHubContext<StreamHub> hubContext, ILogger<StreamNotificationService> logger)
+        public StreamNotificationService(IHubContext<NotificationHub> hub)
         {
-            _hubContext = hubContext;
-            _logger = logger;
+            _hub = hub;
         }
 
-        /// <summary>
-        /// Отправка уведомлений о начале стрима всем подписанным пользователям
-        /// </summary>
         public async Task NotifyStreamStartedAsync(StreamModel stream)
         {
-            if (stream.User == null) return;
-
-            // Отправляем всем подписчикам стримера
-            await _hubContext.Clients.Group($"notifications_{stream.UserId}")
-                .SendAsync("StreamStarted", new
+            await _hub.Clients.Group($"streamer_subs_{stream.UserId}")
+                .SendAsync("ReceiveNotification", new
                 {
+                    Type = "stream_started",
+                    Message = $"{stream.User.Nickname} начал стрим!",
                     StreamId = stream.Id,
-                    StreamName = stream.StreamName,
                     StreamerId = stream.UserId,
-                    StreamerName = stream.User.Nickname,
-                    Tags = stream.Tags,
-                    PreviewlUrl = stream.PreviewUrl
+                    Date = DateTime.UtcNow
                 });
-
-            _logger.LogInformation("Notified subscribers about stream start. StreamId: {StreamId}", stream.Id);
         }
 
-        /// <summary>
-        /// Отправка уведомлений о завершении стрима
-        /// </summary>
         public async Task NotifyStreamEndedAsync(StreamModel stream)
         {
-            if (stream.User == null) return;
-
-            await _hubContext.Clients.Group($"notifications_{stream.UserId}")
-                .SendAsync("StreamEnded", new
+            await _hub.Clients.Group($"streamer_subs_{stream.UserId}")
+                .SendAsync("ReceiveNotification", new
                 {
+                    Type = "stream_ended",
+                    Message = $"{stream.User.Nickname} закончил стрим.",
                     StreamId = stream.Id,
-                    StreamerId = stream.UserId
+                    StreamerId = stream.UserId,
+                    Date = DateTime.UtcNow
                 });
+        }
 
-            _logger.LogInformation("Notified subscribers about stream end. StreamId: {StreamId}", stream.Id);
+        public async Task NotifyStreamerSubscribersAsync(int streamerId, string message)
+        {
+            await _hub.Clients.Group($"streamer_subs_{streamerId}")
+                .SendAsync("ReceiveNotification", new
+                {
+                    Type = "system",
+                    Message = message,
+                    StreamerId = streamerId,
+                    Date = DateTime.UtcNow
+                });
+        }
+
+        public async Task NotifyUserAsync(int userId, string message, string type = "info")
+        {
+            await _hub.Clients.Group($"user_{userId}")
+                .SendAsync("ReceiveNotification", new
+                {
+                    Type = type,
+                    Message = message,
+                    Date = DateTime.UtcNow
+                });
         }
     }
 }
+

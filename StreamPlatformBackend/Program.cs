@@ -156,5 +156,6 @@ app.UseAuthorization();
 
 app.MapControllers();
 app.MapHub<StreamHub>("/hubs/streamHub");
+app.MapHub<NotificationHub>("/hubs/notificationHub");
 
 app.Run();

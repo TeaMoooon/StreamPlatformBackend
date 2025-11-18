@@ -45,7 +45,6 @@ namespace StreamPlatformBackend.Data
                 .HasForeignKey(s => s.CategoryId)
                 .OnDelete(DeleteBehavior.SetNull);
 
-            modelBuilder.Entity<SubscriptionModel>().HasKey(s => new { s.SubscriberId, s.TargetUserId });
         }
     }
 }

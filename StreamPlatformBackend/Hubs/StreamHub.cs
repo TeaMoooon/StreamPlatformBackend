@@ -9,7 +9,6 @@ namespace StreamPlatformBackend.Hubs
     /// SignalR хаб для работы со стримами:
     /// - Подключение к стриму
     /// - Подсчет уникальных зрителей
-    /// - Уведомления подписчиков
     /// - Обновление статуса стрима в реальном времени
     /// </summary>
     public class StreamHub : Hub
@@ -130,38 +129,7 @@ namespace StreamPlatformBackend.Hubs
             }
         }
 
-        /// <summary>
-        /// Подписка на уведомления о стримах (для подписчиков)
-        /// </summary>
-        [Authorize]
-        public async Task SubscribeToMySubscriptions()
-        {
-            var userId = GetCurrentUserId();
-            if (userId <= 0) return;
-
-            var subscriptions = await _userService.GetSubscribedStreamerIdsAsync(userId);
-
-            foreach (var streamerId in subscriptions)
-                await Groups.AddToGroupAsync(Context.ConnectionId, $"notifications_{streamerId}");
-
-            _logger.LogInformation("User {UserId} subscribed to notifications for {Count} streamers", userId, subscriptions.Count);
-        }
-
-        /// <summary>
-        /// Отписка от уведомлений стримера
-        /// </summary>
-        /// <param name="streamerId">ID стримера</param>
-        [Authorize]
-        public async Task UnsubscribeFromStreamer(int streamerId)
-        {
-            var userId = GetCurrentUserId();
-            if (userId <= 0) return;
-
-            await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"notifications_{streamerId}");
-
-            _logger.LogInformation("User {UserId} unsubscribed from notifications of streamer {StreamerId}", userId, streamerId);
-        }
-
+        
         /// <summary>
         /// Обновление статуса стрима (IsLive) для всех зрителей
         /// </summary>
