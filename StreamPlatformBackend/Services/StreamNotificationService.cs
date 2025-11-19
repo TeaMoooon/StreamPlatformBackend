@@ -33,8 +33,10 @@ namespace StreamPlatformBackend.Services
                 {
                     Type = "stream_started",
                     Message = $"{stream.User.Nickname} начал стрим!",
-                    StreamId = stream.Id,
                     StreamerId = stream.UserId,
+                    StreamId = stream.Id,
+                    StreamerName = stream.User.Nickname,  // <-- новое поле
+                    stream.StreamName,            // <-- новое поле
                     Date = DateTime.UtcNow
                 });
         }
