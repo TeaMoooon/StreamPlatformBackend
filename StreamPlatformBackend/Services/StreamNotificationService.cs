@@ -41,7 +41,7 @@ namespace StreamPlatformBackend.Services
                 });
         }
 
-        public async Task NotifyStreamEndedAsync(StreamModel stream)
+        /*public async Task NotifyStreamEndedAsync(StreamModel stream)
         {
             await _hub.Clients.Group($"streamer_subs_{stream.UserId}")
                 .SendAsync("ReceiveNotification", new
@@ -52,6 +52,12 @@ namespace StreamPlatformBackend.Services
                     StreamerId = stream.UserId,
                     Date = DateTime.UtcNow
                 });
+        }*/
+
+        public Task NotifyStreamEndedAsync(StreamModel stream)
+        {
+            // Просто логируем или ничего не делаем
+            return Task.CompletedTask;
         }
 
         public async Task NotifyStreamerSubscribersAsync(int streamerId, string message)
