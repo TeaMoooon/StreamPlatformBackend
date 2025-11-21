@@ -29,7 +29,7 @@ namespace StreamPlatformBackend.Services
         private readonly INotificationRepository _notificationRepository;
         private readonly INotificationSender _notificationSender;
 
-        public StreamService(AppDbContext context,INotificationRepository notificationRepository,NotificationSender notificationSender,ILogger<StreamService> logger)
+        public StreamService(AppDbContext context,INotificationRepository notificationRepository,INotificationSender notificationSender,ILogger<StreamService> logger)
         {
             _context = context;
             _notificationRepository = notificationRepository;
@@ -39,13 +39,21 @@ namespace StreamPlatformBackend.Services
 
         public async Task<StreamModel> StartStreamAsync(int userId, string streamKey)
         {
-            var user = await _context.Users.Include(u => u.CurrentStream)
+            // Получаем пользователя вместе с текущим стримом
+            var user = await _context.Users
+                .Include(u => u.CurrentStream)
                 .FirstOrDefaultAsync(u => u.Id == userId);
 
-            if (user == null) throw new ArgumentException($"User with ID {userId} not found");
-            if (user.StreamKey != streamKey) throw new UnauthorizedAccessException("Invalid stream key");
-            if (user.CurrentStream != null && user.CurrentStream.EndedAt == null) return user.CurrentStream;
+            if (user == null)
+                throw new ArgumentException($"User with ID {userId} not found");
+            if (user.StreamKey != streamKey)
+                throw new UnauthorizedAccessException("Invalid stream key");
 
+            // Если уже есть активный стрим — возвращаем его
+            if (user.CurrentStream != null && user.CurrentStream.EndedAt == null)
+                return user.CurrentStream;
+
+            // Создаём новый стрим
             var stream = new StreamModel
             {
                 UserId = user.Id,
@@ -62,7 +70,14 @@ namespace StreamPlatformBackend.Services
 
             await _context.SaveChangesAsync();
 
-            // 🔔 Используем NotifyStreamerSubscribersAsync для уведомления всех подписчиков
+            // Получаем подписчиков стримера
+            var subscribers = await _context.Subscriptions
+                .Where(s => s.TargetUserId == userId)
+                .Include(s => s.Subscriber)
+                .Select(s => s.Subscriber)
+                .ToListAsync();
+
+            // Формируем payload уведомления
             var payload = new
             {
                 StreamId = stream.Id,
@@ -71,10 +86,12 @@ namespace StreamPlatformBackend.Services
                 StreamName = stream.StreamName
             };
 
-            await _notificationSender.NotifyStreamerSubscribersAsync(user.Id, payload, NotificationType.StreamStarted);
+            // Отправляем уведомления через NotificationSender
+            await _notificationSender.NotifyStreamerSubscribersAsync(subscribers, user.Id, payload, NotificationType.StreamStarted);
 
             return stream;
         }
+
 
 
 

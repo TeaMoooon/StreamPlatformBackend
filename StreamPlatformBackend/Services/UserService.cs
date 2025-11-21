@@ -50,7 +50,7 @@ namespace StreamPlatformBackend.Services
         private readonly INotificationRepository _notificationRepository;
         private readonly INotificationSender _notificationSender;
 
-        public UserService(AppDbContext context, IPasswordHasherService passwordHasher, INotificationRepository notificationRepository, NotificationSender notificationSender, ILogger<UserService> logger)
+        public UserService(AppDbContext context, IPasswordHasherService passwordHasher, INotificationRepository notificationRepository, INotificationSender notificationSender, ILogger<UserService> logger)
         {
             _context = context;
             _passwordHasher = passwordHasher;

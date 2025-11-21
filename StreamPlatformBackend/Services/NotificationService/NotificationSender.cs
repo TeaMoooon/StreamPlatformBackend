@@ -2,6 +2,7 @@
 using StreamPlatformBackend.Hubs;
 using StreamPlatformBackend.Models;
 using StreamPlatformBackend.Models.Enums;
+using StreamPlatformBackend.Models.User;
 using System.Text.Json;
 
 namespace StreamPlatformBackend.Services.NotificationService
@@ -9,22 +10,18 @@ namespace StreamPlatformBackend.Services.NotificationService
     public interface INotificationSender
     {
         Task SendToUserAsync(NotificationModel notification);
-        Task NotifyStreamerSubscribersAsync(int streamerId, object payload, NotificationType type);
+        Task NotifyStreamerSubscribersAsync(IEnumerable<UserModel> subscribers, int streamerId, object payload, NotificationType type);
+
     }
 
     public class NotificationSender : INotificationSender
     {
         private readonly IHubContext<NotificationHub> _hub;
-        private readonly IUserService _userService;
         private readonly INotificationRepository _notificationRepository;
 
-        public NotificationSender(
-            IHubContext<NotificationHub> hub,
-            IUserService userService,
-            INotificationRepository notificationRepository)
+        public NotificationSender(IHubContext<NotificationHub> hub, INotificationRepository notificationRepository)
         {
             _hub = hub;
-            _userService = userService;
             _notificationRepository = notificationRepository;
         }
 
@@ -45,9 +42,8 @@ namespace StreamPlatformBackend.Services.NotificationService
         /// <summary>
         /// Рассылает уведомление всем подписчикам стримера
         /// </summary>
-        public async Task NotifyStreamerSubscribersAsync(int streamerId,object payload,NotificationType type)
+        public async Task NotifyStreamerSubscribersAsync(IEnumerable<UserModel> subscribers, int streamerId,object payload,NotificationType type)
         {
-            var subscribers = await _userService.GetSubscribersAsync(streamerId);
 
             foreach (var sub in subscribers)
             {
