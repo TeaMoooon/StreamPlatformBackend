@@ -6,6 +6,7 @@ using Npgsql;
 using StreamPlatformBackend.Data;
 using StreamPlatformBackend.Hubs;
 using StreamPlatformBackend.Services;
+using StreamPlatformBackend.Services.NotificationService;
 using System.Reflection;
 using System.Text;
 
@@ -67,7 +68,8 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddScoped<IPasswordHasherService, PasswordHasherService>();
 builder.Services.AddScoped<IJwtService, JwtService>();
 builder.Services.AddScoped<IUserService, UserService>();
-builder.Services.AddScoped<IStreamNotificationService, StreamNotificationService>();
+builder.Services.AddScoped<INotificationRepository, NotificationRepository>();
+builder.Services.AddScoped<NotificationSender, NotificationSender>();
 builder.Services.AddScoped<IStreamService, StreamService>();
 
 

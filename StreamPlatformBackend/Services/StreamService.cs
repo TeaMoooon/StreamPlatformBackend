@@ -1,8 +1,12 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using StreamPlatformBackend.Data;
 using StreamPlatformBackend.DTO.StreamDTO;
+using StreamPlatformBackend.Models;
+using StreamPlatformBackend.Models.Enums;
 using StreamPlatformBackend.Models.Stream;
 using StreamPlatformBackend.Models.User;
+using StreamPlatformBackend.Services.NotificationService;
+using System.Text.Json;
 
 namespace StreamPlatformBackend.Services
 {
@@ -22,29 +26,25 @@ namespace StreamPlatformBackend.Services
     {
         private readonly AppDbContext _context;
         private readonly ILogger<StreamService> _logger;
-        private readonly IStreamNotificationService _notificationService;
+        private readonly INotificationRepository _notificationRepository;
+        private readonly INotificationSender _notificationSender;
 
-        public StreamService(AppDbContext context, IStreamNotificationService notificationService, ILogger<StreamService> logger)
+        public StreamService(AppDbContext context,INotificationRepository notificationRepository,NotificationSender notificationSender,ILogger<StreamService> logger)
         {
             _context = context;
-            _notificationService = notificationService;
+            _notificationRepository = notificationRepository;
+            _notificationSender = notificationSender;
             _logger = logger;
         }
 
         public async Task<StreamModel> StartStreamAsync(int userId, string streamKey)
         {
-            var user = await _context.Users
-                .Include(u => u.CurrentStream)
+            var user = await _context.Users.Include(u => u.CurrentStream)
                 .FirstOrDefaultAsync(u => u.Id == userId);
 
-            if (user == null)
-                throw new ArgumentException($"User with ID {userId} not found");
-
-            if (user.StreamKey != streamKey)
-                throw new UnauthorizedAccessException("Invalid stream key");
-
-            if (user.CurrentStream != null && user.CurrentStream.EndedAt == null)
-                return user.CurrentStream; // уже идёт стрим
+            if (user == null) throw new ArgumentException($"User with ID {userId} not found");
+            if (user.StreamKey != streamKey) throw new UnauthorizedAccessException("Invalid stream key");
+            if (user.CurrentStream != null && user.CurrentStream.EndedAt == null) return user.CurrentStream;
 
             var stream = new StreamModel
             {
@@ -62,11 +62,21 @@ namespace StreamPlatformBackend.Services
 
             await _context.SaveChangesAsync();
 
-            // 🔔 Уведомления о старте стрима подписчикам
-            await _notificationService.NotifyStreamStartedAsync(stream);
+            // 🔔 Используем NotifyStreamerSubscribersAsync для уведомления всех подписчиков
+            var payload = new
+            {
+                StreamId = stream.Id,
+                StreamerId = user.Id,
+                StreamerName = user.Nickname,
+                StreamName = stream.StreamName
+            };
+
+            await _notificationSender.NotifyStreamerSubscribersAsync(user.Id, payload, NotificationType.StreamStarted);
 
             return stream;
         }
+
+
 
         public async Task<bool> EndStreamAsync(int userId, string streamKey)
         {
@@ -88,7 +98,7 @@ namespace StreamPlatformBackend.Services
             await _context.SaveChangesAsync();
 
             // 🔔 Уведомления о завершении стрима подписчикам
-            await _notificationService.NotifyStreamEndedAsync(user.CurrentStream);
+            //await _notificationService.NotifyStreamEndedAsync(user.CurrentStream);
 
             return true;
         }

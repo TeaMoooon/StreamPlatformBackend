@@ -3,9 +3,12 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using StreamPlatformBackend.Data;
 using StreamPlatformBackend.DTO.UserDTO;
+using StreamPlatformBackend.Models;
 using StreamPlatformBackend.Models.Enums;
 using StreamPlatformBackend.Models.User;
+using StreamPlatformBackend.Services.NotificationService;
 using System.Collections.Concurrent;
+using System.Text.Json;
 
 namespace StreamPlatformBackend.Services
 {
@@ -44,11 +47,15 @@ namespace StreamPlatformBackend.Services
         private readonly AppDbContext _context;
         private readonly IPasswordHasherService _passwordHasher;
         private readonly ILogger<UserService> _logger;
+        private readonly INotificationRepository _notificationRepository;
+        private readonly INotificationSender _notificationSender;
 
-        public UserService(AppDbContext context, IPasswordHasherService passwordHasher, ILogger<UserService> logger)
+        public UserService(AppDbContext context, IPasswordHasherService passwordHasher, INotificationRepository notificationRepository, NotificationSender notificationSender, ILogger<UserService> logger)
         {
             _context = context;
             _passwordHasher = passwordHasher;
+            _notificationRepository = notificationRepository;
+            _notificationSender = notificationSender;
             _logger = logger;
         }
 
@@ -251,7 +258,6 @@ namespace StreamPlatformBackend.Services
                 .ToListAsync();
         }
 
-
         public async Task<bool> SubscribeToUserAsync(int subscriberId, int targetUserId)
         {
             using var transaction = await _context.Database.BeginTransactionAsync();
@@ -273,7 +279,27 @@ namespace StreamPlatformBackend.Services
 
                 await _context.Subscriptions.AddAsync(subscription);
                 await _context.SaveChangesAsync();
+
                 await transaction.CommitAsync();
+
+
+                // 1) Сохраняем уведомление
+                var notification = new NotificationModel
+                {
+                    UserId = targetUserId, // стример
+                    Type = NotificationType.NewFollower,
+                    PayloadJson = JsonSerializer.Serialize(new
+                    {
+                        SubscriberId = subscriberId,
+                        SubscriberName = (await GetUserByIdAsync(subscriberId))?.Nickname
+                    }),
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                await _notificationRepository.CreateNotificationAsync(notification);
+
+                // 2) Отправляем через SignalR
+                await _notificationSender.SendToUserAsync(notification);
 
                 return true;
             }
@@ -284,6 +310,8 @@ namespace StreamPlatformBackend.Services
                 return false;
             }
         }
+
+
 
         public async Task<bool> UnsubscribeFromUserAsync(int subscriberId, int targetUserId)
         {

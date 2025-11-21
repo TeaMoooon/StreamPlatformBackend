@@ -1,4 +1,5 @@
 ﻿using Microsoft.EntityFrameworkCore;
+using StreamPlatformBackend.Models;
 using StreamPlatformBackend.Models.Stream;
 using StreamPlatformBackend.Models.User;
 
@@ -14,6 +15,7 @@ namespace StreamPlatformBackend.Data
         public DbSet<SubscriptionModel> Subscriptions { get; set; }
         public DbSet<StreamModel> Streams { get; set; }
         public DbSet<StreamCategory> StreamCategories { get; set; }
+        public DbSet<NotificationModel> Notifications { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -44,6 +46,9 @@ namespace StreamPlatformBackend.Data
                 .WithMany(c => c.Streams)
                 .HasForeignKey(s => s.CategoryId)
                 .OnDelete(DeleteBehavior.SetNull);
+
+            modelBuilder.Entity<NotificationModel>()
+                .HasIndex(n => new { n.UserId, n.CreatedAt });
 
         }
     }
