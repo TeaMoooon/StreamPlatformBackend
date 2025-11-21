@@ -129,7 +129,7 @@ namespace StreamPlatformBackend.Hubs
             }
         }
 
-        
+
         /// <summary>
         /// Обновление статуса стрима (IsLive) для всех зрителей
         /// </summary>
@@ -137,7 +137,27 @@ namespace StreamPlatformBackend.Hubs
         public async Task UpdateStreamStatus(int streamerId)
         {
             var streamInfo = await _streamService.GetStreamInfoAsync(streamerId);
-            await Clients.Group($"stream_{streamerId}").SendAsync("StreamStatusUpdated", streamInfo);
+
+            if (streamInfo == null)
+            {
+                // Стрим не найден или завершён
+                await Clients.Group($"stream_{streamerId}")
+                    .SendAsync("StreamStatusChanged", new
+                    {
+                        Status = "Offline",
+                        Stream = (object?)null
+                    });
+                return;
+            }
+
+            string status = streamInfo.IsLive ? "Live" : "Offline";
+
+            await Clients.Group($"stream_{streamerId}")
+                .SendAsync("StreamStatusChanged", new
+                {
+                    Status = status,
+                    Stream = streamInfo
+                });
         }
 
         /// <summary>
