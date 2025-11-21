@@ -17,7 +17,7 @@ namespace StreamPlatformBackend.Controllers
         private readonly AppDbContext _db;
         private readonly INotificationRepository _notificationRepository;
 
-        public NotificationsController(AppDbContext db, NotificationRepository notificationRepository)
+        public NotificationsController(AppDbContext db, INotificationRepository notificationRepository)
         {
             _db = db;
             _notificationRepository = notificationRepository;
