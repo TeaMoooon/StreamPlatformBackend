@@ -19,7 +19,7 @@ namespace StreamPlatformBackend.Controllers
         private readonly INotificationRepository _notificationRepository;
         private readonly INotificationSender _notificationSender;
 
-        public SubscriptionsController(IUserService userService, ILogger<SubscriptionsController> logger, INotificationRepository notificationRepository, NotificationSender notificationSender)
+        public SubscriptionsController(IUserService userService, ILogger<SubscriptionsController> logger, INotificationRepository notificationRepository, INotificationSender notificationSender)
         {
             _userService = userService;
             _logger = logger;
