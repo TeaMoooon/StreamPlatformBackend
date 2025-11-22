@@ -65,34 +65,16 @@ namespace StreamPlatformBackend.Controllers
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] UserLoginDto dto)
         {
-            if (!ModelState.IsValid)
-                return BadRequest(ModelState);
+            var user = await _userService.LoginAsync(dto.LoginOrEmail, dto.Password);
 
-            try
-            {
-                var user = await _userService.GetUserByEmailAsync(dto.Email);
-                if (user == null || !await _userService.ValidateUserCredentialsAsync(dto.Email, dto.Password))
-                {
-                    _logger.LogWarning("Неудачная попытка входа для {Email}", dto.Email);
-                    return Unauthorized(new { message = "Неверный email или пароль" });
-                }
+            if (user == null)
+                return Unauthorized(new { message = "Invalid login/email or password" });
 
-                // Генерируем JWT
-                var token = _jwtService.GenerateToken(user);
+            var token = _jwtService.GenerateToken(user);
 
-                // Возвращаем токен клиенту
-                return Ok(new
-                {
-                    message = "Вход выполнен успешно",
-                    token
-                });
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Ошибка при попытке входа для {Email}", dto.Email);
-                return StatusCode(500, new { message = "Внутренняя ошибка сервера" });
-            }
+            return Ok(new { token });
         }
+
 
 
         /// <summary>

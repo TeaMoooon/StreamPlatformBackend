@@ -4,16 +4,17 @@ namespace StreamPlatformBackend.DTO.UserDTO
 {
     public class UserUpdateDataDto
     {
-        [StringLength(50, MinimumLength = 5)]
-        public string? Nickname { get; set; } = string.Empty;
+       public string? Nickname { get; set; }
 
         [EmailAddress]
-        public string? Email { get; set; } = string.Empty;
+        public string? Email { get; set; }     // необязательное поле
 
         [MaxLength(500)]
-        public string? ProfileDescription { get; set; } = string.Empty;
+        public string? ProfileDescription { get; set; }
 
-        public string? ProfileImage { get; set; } = string.Empty;
+        public string? ProfileImage { get; set; }
+
+        public string? BackgroundImage { get; set; }
 
     }
 }

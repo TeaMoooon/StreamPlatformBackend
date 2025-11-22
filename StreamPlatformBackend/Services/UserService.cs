@@ -1,4 +1,5 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using StreamPlatformBackend.Data;
@@ -15,6 +16,7 @@ namespace StreamPlatformBackend.Services
     public interface IUserService
     {
         Task<UserModel> CreateUserAsync(UserCreateDto userCreateDto);
+
         Task<bool> ValidateUserCredentialsAsync(string email, string password);
         Task UpdateUserProfileAsync(int userId, UserUpdateDataDto userUpdateDataDto);
         Task<string> RegenerateStreamKeyAsync(int userId);
@@ -25,7 +27,7 @@ namespace StreamPlatformBackend.Services
         Task<bool> UnsubscribeFromUserAsync(int subscriberId, int targetUserId);
         Task<bool> IsSubscribedAsync(int subscriberId, int targetUserId);
         Task UpdateUserOnlineStatusAsync(int userId, bool isOnline);
-
+        Task<UserModel?> LoginAsync(string loginOrEmail, string password);
 
         Task<UserModel> GetUserByNameAsync(string name);
         Task<UserModel> GetUserByIdAsync(int id);
@@ -79,7 +81,7 @@ namespace StreamPlatformBackend.Services
 
                 var user = new UserModel
                 {
-                    Email = userCreateDto.Email,
+                    Email = userCreateDto.Email.ToLower(),
                     Nickname = userCreateDto.Nickname.ToLower(),
                     PasswordHash = passwordHash,
                     StreamServerUrl = "rtmp://your-server.com/live"
@@ -102,12 +104,39 @@ namespace StreamPlatformBackend.Services
             }
         }
 
+        public async Task<UserModel?> LoginAsync(string loginOrEmail, string password)
+        {
+            UserModel? user;
+
+            // Проверяем, что это email (если есть @)
+            bool isEmail = loginOrEmail.Contains("@");
+
+            if (isEmail)
+            {
+                user = await _context.Users
+                    .FirstOrDefaultAsync(u => u.Email == loginOrEmail.ToLower());
+            }
+            else
+            {
+                user = await _context.Users
+                    .FirstOrDefaultAsync(u => u.Nickname == loginOrEmail.ToLower());
+            }
+
+            if (user == null)
+                return null;
+
+            // Проверка пароля через BCrypt
+            if (!_passwordHasher.VerifyPassword(password, user.PasswordHash))
+                return null;
+
+            return user;
+        }
 
         public async Task<bool> ValidateUserCredentialsAsync(string email, string password)
         {
             try
             {
-                var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
+                var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == email.ToLower());
                 if (user == null)
                 {
                     await Task.Delay(2000);
@@ -139,35 +168,59 @@ namespace StreamPlatformBackend.Services
 
                 bool hasChanges = false;
 
-                if (!string.IsNullOrEmpty(userUpdateDataDto.Email) && user.Email != userUpdateDataDto.Email)
+                // Email — обновляем только если пришло
+                if (!string.IsNullOrEmpty(userUpdateDataDto.Email) && user.Email != userUpdateDataDto.Email.ToLower())
                 {
+                    if (!IsValidEmail(userUpdateDataDto.Email))
+                        throw new ArgumentException("Неверный формат email");
+
                     if (await EmailExistsAsync(userUpdateDataDto.Email))
                         throw new ArgumentException("Email уже используется");
-                    user.Email = userUpdateDataDto.Email;
+
+                    user.Email = userUpdateDataDto.Email.ToLower(); // сохраняем в нижнем регистре
                     hasChanges = true;
                 }
 
-                if (!string.IsNullOrEmpty(userUpdateDataDto.Nickname) && user.Nickname != userUpdateDataDto.Nickname)
+                // Nickname — обновляем только если пришло
+                if (!string.IsNullOrEmpty(userUpdateDataDto.Nickname) && user.Nickname != userUpdateDataDto.Nickname.ToLower())
                 {
+                    if (userUpdateDataDto.Nickname.Length < 3 || userUpdateDataDto.Nickname.Length > 50)
+                        throw new ArgumentException("Никнейм должен быть от 3 до 50 символов");
+
                     if (await NicknameExistsAsync(userUpdateDataDto.Nickname))
                         throw new ArgumentException("Никнейм уже используется");
-                    user.Nickname = userUpdateDataDto.Nickname;
+
+                    user.Nickname = userUpdateDataDto.Nickname.ToLower(); // сохраняем в нижнем регистре
                     hasChanges = true;
                 }
 
+                // ProfileDescription
                 if (userUpdateDataDto.ProfileDescription != null && user.ProfileDescription != userUpdateDataDto.ProfileDescription)
                 {
+                    if (userUpdateDataDto.ProfileDescription.Length > 500)
+                        throw new ArgumentException("Описание не должно превышать 500 символов");
+
                     user.ProfileDescription = userUpdateDataDto.ProfileDescription;
                     hasChanges = true;
                 }
 
+                // ProfileImage
                 if (userUpdateDataDto.ProfileImage != null && user.ProfileImage != userUpdateDataDto.ProfileImage)
                 {
                     user.ProfileImage = userUpdateDataDto.ProfileImage;
                     hasChanges = true;
                 }
 
-                if (hasChanges) await _context.SaveChangesAsync();
+                // BackgroundImage
+                if (userUpdateDataDto.BackgroundImage != null && user.BackgroundImage != userUpdateDataDto.BackgroundImage)
+                {
+                    user.BackgroundImage = userUpdateDataDto.BackgroundImage;
+                    hasChanges = true;
+                }
+
+
+                if (hasChanges)
+                    await _context.SaveChangesAsync();
             }
             catch (Exception ex)
             {
@@ -175,6 +228,25 @@ namespace StreamPlatformBackend.Services
                 throw;
             }
         }
+
+        // Вспомогательная проверка email
+        private bool IsValidEmail(string email)
+        {
+            try
+            {
+                var addr = new System.Net.Mail.MailAddress(email);
+                return addr.Address == email;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+
+
+
+
 
         public async Task<string> RegenerateStreamKeyAsync(int userId)
         {
@@ -361,17 +433,22 @@ namespace StreamPlatformBackend.Services
 
         public async Task<bool> EmailExistsAsync(string email)
         {
-            return await _context.Users.AsNoTracking().AnyAsync(u => u.Email.ToLower() == email.ToLower());
+            return await _context.Users.AsNoTracking().AnyAsync(u => u.Email == email.ToLower());
         }
 
         public async Task<bool> NicknameExistsAsync(string nickname)
         {
-            return await _context.Users.AsNoTracking().AnyAsync(u => u.Nickname.ToLower() == nickname.ToLower());
+            return await _context.Users.AsNoTracking().AnyAsync(u => u.Nickname == nickname.ToLower());
         }
 
         public async Task<UserModel?> GetUserByEmailAsync(string email)
         {
-            return await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Email == email);
+            return await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Email == email.ToLower());
+        }
+
+        public async Task<UserModel?> GetUserByNameAsync(string name)
+        {
+            return await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Nickname == name.ToLower());
         }
 
         public async Task<UserModel?> GetUserByIdAsync(int id)
@@ -379,10 +456,6 @@ namespace StreamPlatformBackend.Services
             return await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == id);
         }
 
-        public async Task<UserModel?> GetUserByNameAsync(string name)
-        {
-            return await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Nickname.ToLower() == name.ToLower());
-        }
 
         public async Task<bool> StreamKeyExistsAsync(string streamKey)
         {
