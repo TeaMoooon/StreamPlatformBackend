@@ -25,20 +25,18 @@ namespace StreamPlatformBackend.Data
             // Составной ключ для подписок (нельзя дважды подписаться на одного и того же)
             modelBuilder.Entity<SubscriptionModel>().HasKey(s => new { s.SubscriberId, s.TargetUserId });
 
-
             modelBuilder.Entity<SubscriptionModel>()
                 .ToTable(t => t.HasCheckConstraint("CK_Subscription_NotSelf", "\"SubscriberId\" != \"TargetUserId\""));
 
-            // 🔥 ОБНОВЛЕННЫЕ ОТНОШЕНИЯ - используйте навигационные свойства
             modelBuilder.Entity<SubscriptionModel>()
                 .HasOne(s => s.Subscriber)
-                .WithMany(u => u.Subscriptions) // Ссылаемся на навигационное свойство
+                .WithMany(u => u.Subscriptions)
                 .HasForeignKey(s => s.SubscriberId)
                 .OnDelete(DeleteBehavior.Restrict);
 
             modelBuilder.Entity<SubscriptionModel>()
                 .HasOne(s => s.TargetUser)
-                .WithMany(u => u.Subscribers) // Ссылаемся на навигационное свойство
+                .WithMany(u => u.Subscribers)
                 .HasForeignKey(s => s.TargetUserId)
                 .OnDelete(DeleteBehavior.Restrict);
 
@@ -57,6 +55,20 @@ namespace StreamPlatformBackend.Data
                 .HasForeignKey(s => s.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
 
+            // История стримов: User -> StreamsHistory (1:N)
+            modelBuilder.Entity<StreamModel>()
+                .HasOne(s => s.User)
+                .WithMany(u => u.StreamsHistory)
+                .HasForeignKey(s => s.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            // Текущий стрим: User -> CurrentStream (1:1), через CurrentStreamId
+            modelBuilder.Entity<UserModel>()
+                .HasOne(u => u.CurrentStream)
+                .WithMany() // нет обратной навигации
+                .HasForeignKey(u => u.CurrentStreamId)
+                .OnDelete(DeleteBehavior.SetNull);
         }
+
     }
 }

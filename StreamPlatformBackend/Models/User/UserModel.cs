@@ -69,7 +69,9 @@ namespace StreamPlatformBackend.Models.User
 
         public string StreamersLeague { get; set; } = StreamerLeagues.None;
 
-        public virtual StreamModel? CurrentStream { get; set; } = null;
+        public int? CurrentStreamId { get; set; }
+        [ForeignKey(nameof(CurrentStreamId))]
+        public virtual StreamModel? CurrentStream { get; set; }
 
         [JsonIgnore]
         public virtual ICollection<StreamModel> StreamsHistory { get; set; } = new HashSet<StreamModel>();
