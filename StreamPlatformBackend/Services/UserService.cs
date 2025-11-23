@@ -19,7 +19,7 @@ namespace StreamPlatformBackend.Services
         Task<UserModel> CreateUserAsync(UserCreateDto userCreateDto);
 
         Task<bool> ValidateUserCredentialsAsync(string email, string password);
-        Task UpdateUserProfileAsync(int userId, UserUpdateDataDto userUpdateDataDto);
+        Task UpdateUserProfileAsync(int userId, UserUpdateDataDto dto);
         Task<string> UploadUserImageAsync(int userId, IFormFile file, string type);
 
         Task<string> RegenerateStreamKeyAsync(int userId);
@@ -164,95 +164,102 @@ namespace StreamPlatformBackend.Services
             }
         }
 
-        public async Task UpdateUserProfileAsync(int userId, UserUpdateDataDto userUpdateDataDto)
+        public async Task UpdateUserProfileAsync(int userId, UserUpdateDataDto dto)
         {
             try
             {
-                var user = await _context.Users.Include(u => u.SocialLinks).FirstOrDefaultAsync(u => u.Id == userId);
+                var user = await _context.Users.Include(u => u.SocialLinks)
+                                               .FirstOrDefaultAsync(u => u.Id == userId);
                 if (user == null) throw new ArgumentException("Пользователь не найден");
 
                 bool hasChanges = false;
 
-                // Email — обновляем только если пришло
-                if (!string.IsNullOrEmpty(userUpdateDataDto.Email) && user.Email != userUpdateDataDto.Email.ToLower())
+                // 🔹 Email
+                if (!string.IsNullOrEmpty(dto.Email) && user.Email != dto.Email.ToLower())
                 {
-                    if (!IsValidEmail(userUpdateDataDto.Email))
+                    if (!IsValidEmail(dto.Email))
                         throw new ArgumentException("Неверный формат email");
-
-                    if (await EmailExistsAsync(userUpdateDataDto.Email))
+                    if (await EmailExistsAsync(dto.Email))
                         throw new ArgumentException("Email уже используется");
 
-                    user.Email = userUpdateDataDto.Email.ToLower(); // сохраняем в нижнем регистре
+                    user.Email = dto.Email.ToLower();
                     hasChanges = true;
                 }
 
-                // Nickname — обновляем только если пришло
-                if (!string.IsNullOrEmpty(userUpdateDataDto.Nickname) && user.Nickname != userUpdateDataDto.Nickname.ToLower())
+                // 🔹 Nickname
+                if (!string.IsNullOrEmpty(dto.Nickname) && user.Nickname != dto.Nickname.ToLower())
                 {
-                    if (userUpdateDataDto.Nickname.Length < 3 || userUpdateDataDto.Nickname.Length > 50)
+                    if (dto.Nickname.Length is < 3 or > 50)
                         throw new ArgumentException("Никнейм должен быть от 3 до 50 символов");
-
-                    if (await NicknameExistsAsync(userUpdateDataDto.Nickname))
+                    if (await NicknameExistsAsync(dto.Nickname))
                         throw new ArgumentException("Никнейм уже используется");
 
-                    user.Nickname = userUpdateDataDto.Nickname.ToLower(); // сохраняем в нижнем регистре
+                    user.Nickname = dto.Nickname.ToLower();
                     hasChanges = true;
                 }
 
-                // ProfileDescription
-                if (userUpdateDataDto.ProfileDescription != null && user.ProfileDescription != userUpdateDataDto.ProfileDescription)
+                // 🔹 ProfileDescription
+                if (dto.ProfileDescription != null && user.ProfileDescription != dto.ProfileDescription)
                 {
-                    if (userUpdateDataDto.ProfileDescription.Length > 500)
+                    if (dto.ProfileDescription.Length > 500)
                         throw new ArgumentException("Описание не должно превышать 500 символов");
 
-                    user.ProfileDescription = userUpdateDataDto.ProfileDescription;
+                    user.ProfileDescription = dto.ProfileDescription;
                     hasChanges = true;
                 }
 
-                // ProfileImage
-                if (userUpdateDataDto.ProfileImage != null && user.ProfileImage != userUpdateDataDto.ProfileImage)
+                // 🔹 Images
+                if (!string.IsNullOrEmpty(dto.ProfileImage) && user.ProfileImage != dto.ProfileImage)
                 {
-                    user.ProfileImage = userUpdateDataDto.ProfileImage;
+                    user.ProfileImage = dto.ProfileImage;
                     hasChanges = true;
                 }
 
-                // BackgroundImage
-                if (userUpdateDataDto.BackgroundImage != null && user.BackgroundImage != userUpdateDataDto.BackgroundImage)
+                if (!string.IsNullOrEmpty(dto.BackgroundImage) && user.BackgroundImage != dto.BackgroundImage)
                 {
-                    user.BackgroundImage = userUpdateDataDto.BackgroundImage;
+                    user.BackgroundImage = dto.BackgroundImage;
                     hasChanges = true;
                 }
 
-                // 🔹 Обновление соцсетей
-                if (userUpdateDataDto.SocialLinks != null)
+                // 🔹 SocialLinks
+                if (dto.SocialLinks != null)
                 {
-                    // Удаляем старые, которых нет в новом списке
                     var toRemove = user.SocialLinks
-                        .Where(s => !userUpdateDataDto.SocialLinks.Any(n => n.Platform == s.Platform))
-                        .ToList();
+                                       .Where(s => !dto.SocialLinks.Any(n => n.Platform == s.Platform))
+                                       .ToList();
                     _context.UserSocialLinks.RemoveRange(toRemove);
 
-                    // Добавляем или обновляем существующие
-                    foreach (var newLink in userUpdateDataDto.SocialLinks)
+                    foreach (var newLink in dto.SocialLinks)
                     {
                         var existing = user.SocialLinks.FirstOrDefault(s => s.Platform == newLink.Platform);
                         if (existing != null)
-                        {
                             existing.Url = newLink.Url;
-                        }
                         else
-                        {
                             user.SocialLinks.Add(new UserSocialLink
                             {
                                 UserId = userId,
                                 Platform = newLink.Platform,
                                 Url = newLink.Url
                             });
-                        }
                     }
                     hasChanges = true;
                 }
 
+                // 🔹 Change Password
+                if (!string.IsNullOrEmpty(dto.NewPassword))
+                {
+                    if (string.IsNullOrEmpty(dto.CurrentPassword))
+                        throw new ArgumentException("Текущий пароль обязателен для смены пароля");
+
+                    if (!_passwordHasher.VerifyPassword(dto.CurrentPassword, user.PasswordHash))
+                        throw new ArgumentException("Текущий пароль неверен");
+
+                    if (dto.NewPassword.Length < 6)
+                        throw new ArgumentException("Новый пароль должен быть не менее 6 символов");
+
+                    user.PasswordHash = _passwordHasher.HashPassword(dto.NewPassword);
+                    hasChanges = true;
+                }
 
                 if (hasChanges)
                     await _context.SaveChangesAsync();
