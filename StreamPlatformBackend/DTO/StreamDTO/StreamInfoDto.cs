@@ -14,6 +14,7 @@
         public string HlsUrl { get; set; } = string.Empty;
         public int TotalViews { get; set; }
         public DateTime? StartedAt { get; set; }
+        public DateTime? EndedAt { get; set; }
         public bool IsLive { get; set; }
     }
 }

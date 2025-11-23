@@ -6,6 +6,7 @@ using StreamPlatformBackend.Data;
 using StreamPlatformBackend.DTO.UserDTO;
 using StreamPlatformBackend.Models;
 using StreamPlatformBackend.Models.Enums;
+using StreamPlatformBackend.Models.Stream;
 using StreamPlatformBackend.Models.User;
 using StreamPlatformBackend.Services.NotificationService;
 using System.Collections.Concurrent;
@@ -19,8 +20,10 @@ namespace StreamPlatformBackend.Services
 
         Task<bool> ValidateUserCredentialsAsync(string email, string password);
         Task UpdateUserProfileAsync(int userId, UserUpdateDataDto userUpdateDataDto);
+        Task<string> UploadUserImageAsync(int userId, IFormFile file, string type);
+
         Task<string> RegenerateStreamKeyAsync(int userId);
-        Task<IEnumerable<OnlineUserListDto>> GetOnlineStreamersAsync();
+        Task<(List<OnlineUserListDto> Streams, int TotalCount)> GetOnlineStreamersAsync(int page, int pageSize);
         Task<int> GetOnlineUsersCountAsync();
         Task<IEnumerable<OnlineUserListDto>> GetUserSubscriptionsAsync(int userId);
         Task<bool> SubscribeToUserAsync(int subscriberId, int targetUserId);
@@ -40,6 +43,8 @@ namespace StreamPlatformBackend.Services
         Task<List<int>> GetSubscribedStreamerIdsAsync(int userId);
 
         Task<UserModel> GetUserByEmailAsync(string email);
+
+        Task<List<StreamModel>> GetUserStreamHistoryAsync(int userId);
 
 
     }
@@ -163,7 +168,7 @@ namespace StreamPlatformBackend.Services
         {
             try
             {
-                var user = await _context.Users.FindAsync(userId);
+                var user = await _context.Users.Include(u => u.SocialLinks).FirstOrDefaultAsync(u => u.Id == userId);
                 if (user == null) throw new ArgumentException("Пользователь не найден");
 
                 bool hasChanges = false;
@@ -218,6 +223,36 @@ namespace StreamPlatformBackend.Services
                     hasChanges = true;
                 }
 
+                // 🔹 Обновление соцсетей
+                if (userUpdateDataDto.SocialLinks != null)
+                {
+                    // Удаляем старые, которых нет в новом списке
+                    var toRemove = user.SocialLinks
+                        .Where(s => !userUpdateDataDto.SocialLinks.Any(n => n.Platform == s.Platform))
+                        .ToList();
+                    _context.UserSocialLinks.RemoveRange(toRemove);
+
+                    // Добавляем или обновляем существующие
+                    foreach (var newLink in userUpdateDataDto.SocialLinks)
+                    {
+                        var existing = user.SocialLinks.FirstOrDefault(s => s.Platform == newLink.Platform);
+                        if (existing != null)
+                        {
+                            existing.Url = newLink.Url;
+                        }
+                        else
+                        {
+                            user.SocialLinks.Add(new UserSocialLink
+                            {
+                                UserId = userId,
+                                Platform = newLink.Platform,
+                                Url = newLink.Url
+                            });
+                        }
+                    }
+                    hasChanges = true;
+                }
+
 
                 if (hasChanges)
                     await _context.SaveChangesAsync();
@@ -228,6 +263,68 @@ namespace StreamPlatformBackend.Services
                 throw;
             }
         }
+
+
+
+        /// <summary>
+        /// Загружает изображение на сервер и обновляет профиль пользователя.
+        /// </summary>
+        /// <remarks>
+        /// Создаёт папку для пользователя, сохраняет файл с именем
+        /// <b>profile.jpg</b> или <b>background.jpg</b>
+        /// 
+        /// Разрешённые форматы: JPG, JPEG, PNG, WEBP.
+        /// </remarks>
+        /// <param name="userId">ID пользователя</param>
+        /// <param name="file">Файл изображения</param>
+        /// <param name="type">Тип изображения ("profile" или "background")</param>
+        /// <returns>URL сохранённого файла</returns>
+        public async Task<string> UploadUserImageAsync(int userId, IFormFile file, string type)
+        {
+            var user = await _context.Users.FindAsync(userId);
+            if (user == null)
+                throw new ArgumentException("Пользователь не найден");
+
+            // Allowed formats
+            var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".webp" };
+            var extension = Path.GetExtension(file.FileName).ToLower();
+
+            if (!allowedExtensions.Contains(extension))
+                throw new ArgumentException("Разрешены только: JPG, PNG, WEBP");
+
+            // Folder: wwwroot/uploads/users/{id}/
+            var folderPath = Path.Combine("wwwroot", "uploads", "users", userId.ToString());
+            Directory.CreateDirectory(folderPath);
+
+            // File name
+            string fileName = type switch
+            {
+                "profile" => $"profile{extension}",
+                "background" => $"background{extension}",
+                _ => throw new ArgumentException("Неверный тип изображения")
+            };
+
+            var fullPath = Path.Combine(folderPath, fileName);
+
+            // Save file
+            using (var stream = new FileStream(fullPath, FileMode.Create))
+                await file.CopyToAsync(stream);
+
+            // URL for frontend
+            string url = $"/uploads/users/{userId}/{fileName}";
+
+            if (type == "profile")
+                user.ProfileImage = url;
+
+            if (type == "background")
+                user.BackgroundImage = url;
+
+            await _context.SaveChangesAsync();
+
+            return url;
+        }
+
+
 
         // Вспомогательная проверка email
         private bool IsValidEmail(string email)
@@ -280,24 +377,35 @@ namespace StreamPlatformBackend.Services
             }
         }
 
-        public async Task<IEnumerable<OnlineUserListDto>> GetOnlineStreamersAsync()
+        public async Task<(List<OnlineUserListDto> Streams, int TotalCount)> GetOnlineStreamersAsync(int page = 1, int pageSize = 25)
         {
-            return await _context.Users
-                .Where(u => u.IsOnline && u.CurrentStream != null)
+            if (page < 1) page = 1;
+            if (pageSize < 1) pageSize = 25;
+
+            var query = _context.Users
+                .Where(u => u.CurrentStream != null)
                 .Include(u => u.CurrentStream)
                 .OrderBy(u => u.Nickname)
+                .AsNoTracking();
+
+            int totalCount = await query.CountAsync();
+
+            var list = await query
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
                 .Select(u => new OnlineUserListDto
                 {
                     Nickname = u.Nickname,
                     ProfileImage = u.ProfileImage,
-                    IsOnline = u.IsOnline,
                     StreamersLeague = u.StreamersLeague,
                     PreviewlUrl = u.CurrentStream.PreviewUrl,
                     StreamName = u.CurrentStream.StreamName
                 })
-                .AsNoTracking()
                 .ToListAsync();
+
+            return (list, totalCount);
         }
+
 
         public async Task<int> GetOnlineUsersCountAsync()
         {
@@ -478,6 +586,19 @@ namespace StreamPlatformBackend.Services
         private static string GenerateStreamKey(int userId)
         {
             return $"live_{userId}_{Guid.NewGuid():N}";
+        }
+
+
+
+        public async Task<List<StreamModel>> GetUserStreamHistoryAsync(int userId)
+        {
+            // Получаем все стримы пользователя, сортируя по дате начала (новые первыми)
+            var streams = await _context.Streams
+                .Where(s => s.UserId == userId)
+                .OrderByDescending(s => s.StartedAt)
+                .ToListAsync();
+
+            return streams;
         }
 
 

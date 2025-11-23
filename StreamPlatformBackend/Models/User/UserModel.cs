@@ -32,6 +32,9 @@ namespace StreamPlatformBackend.Models.User
 
         public DateTime? LastOnlineDate { get; set; }
 
+        public virtual ICollection<UserSocialLink> SocialLinks { get; set; } = new HashSet<UserSocialLink>();
+
+
 
         // ---------- Приватные/внутренние данные ----------
         [Required]
@@ -67,6 +70,9 @@ namespace StreamPlatformBackend.Models.User
         public string StreamersLeague { get; set; } = StreamerLeagues.None;
 
         public virtual StreamModel? CurrentStream { get; set; } = null;
+
+        [JsonIgnore]
+        public virtual ICollection<StreamModel> StreamsHistory { get; set; } = new HashSet<StreamModel>();
 
 
 

@@ -16,6 +16,7 @@ namespace StreamPlatformBackend.Data
         public DbSet<StreamModel> Streams { get; set; }
         public DbSet<StreamCategory> StreamCategories { get; set; }
         public DbSet<NotificationModel> Notifications { get; set; }
+        public DbSet<UserSocialLink> UserSocialLinks { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -49,6 +50,12 @@ namespace StreamPlatformBackend.Data
 
             modelBuilder.Entity<NotificationModel>()
                 .HasIndex(n => new { n.UserId, n.CreatedAt });
+
+            modelBuilder.Entity<UserSocialLink>()
+                .HasOne(s => s.User)
+                .WithMany(u => u.SocialLinks)
+                .HasForeignKey(s => s.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
 
         }
     }

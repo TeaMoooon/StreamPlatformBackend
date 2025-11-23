@@ -112,6 +112,9 @@ namespace StreamPlatformBackend.Services
             user.LastTags = user.CurrentStream.Tags;
             user.LastPreviewUrl = user.CurrentStream.PreviewUrl;
 
+            // Обнуляем текущий стрим, чтобы пользователь был "не в эфире"
+            user.CurrentStream = null;
+
             await _context.SaveChangesAsync();
 
             // 🔔 Уведомления о завершении стрима подписчикам
