@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using StreamPlatformBackend.Data;
 using StreamPlatformBackend.Services;
 using System.Diagnostics;
+using System.IO;
 
 [ApiController]
 [Route("api/[controller]")]
@@ -110,117 +111,116 @@ public class StreamCallbackController : ControllerBase
     // -------------------------------------------------------------
     // STREAM END + FILE PROCESSING
     // -------------------------------------------------------------
-    [HttpPost("end")]
-    public async Task<IActionResult> OnStreamEnd([FromForm] string name)
+[HttpPost("end")]
+public async Task<IActionResult> OnStreamEnd([FromForm] string name)
+{
+    try
     {
-        try
+        _logger.LogInformation("=== STREAM END CALLBACK === Raw key: {Key}", name);
+
+        if (string.IsNullOrEmpty(name))
+            return Ok();
+
+        if (!TryParseUserIdFromStreamKey(name, out int userId))
         {
-            _logger.LogInformation("=== STREAM END CALLBACK === Raw key: {Key}", name);
-
-            if (string.IsNullOrEmpty(name))
-                return Ok();
-
-            // Парсим userId из stream key
-            if (!TryParseUserIdFromStreamKey(name, out int userId))
-            {
-                _logger.LogWarning("Invalid stream key format on END: {Key}", name);
-                return Ok();
-            }
-
-            // Закрываем стрим в БД
-            await _streamService.EndStreamAsync(userId, name);
-
-            // Ищем завершённый стрим
-            var stream = await _context.Streams
-                .FirstOrDefaultAsync(s =>
-                    s.UserId == userId &&
-                    s.EndedAt != null &&
-                    s.RecordEnabled
-                );
-
-            if (stream == null)
-            {
-                _logger.LogWarning("No ended stream found for user {UserId}", userId);
-                return Ok();
-            }
-
-            // -------------------------------------------------------------
-            // 1. Находим файл, записанный nginx
-            // -------------------------------------------------------------
-            var sourceDir = "/var/www/streamplatform/records/";
-            var sourceFile = Path.Combine(sourceDir, $"{name}.flv");
-
-            if (!System.IO.File.Exists(sourceFile))
-            {
-                _logger.LogWarning("Recorded file not found: {File}", sourceFile);
-                return Ok();
-            }
-
-            _logger.LogInformation("Found recorded FLV: {File}", sourceFile);
-
-            // -------------------------------------------------------------
-            // 2. Создаём папку назначения
-            // -------------------------------------------------------------
-            var targetDir = $"/var/www/streamplatform/media/users/{userId}/streams/{stream.Id}/";
-            Directory.CreateDirectory(targetDir);
-
-            var targetFile = Path.Combine(targetDir, "record.mp4");
-
-            // -------------------------------------------------------------
-            // 3. Конвертируем FLV → MP4
-            // -------------------------------------------------------------
-            var ffmpeg = new ProcessStartInfo
-            {
-                FileName = "ffmpeg",
-                Arguments = $"-y -i \"{sourceFile}\" -c copy \"{targetFile}\"",
-                RedirectStandardError = true,
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
-
-            var ffmpegProcess = Process.Start(ffmpeg);
-            ffmpegProcess.WaitForExit();
-
-            if (ffmpegProcess.ExitCode != 0)
-            {
-                _logger.LogError("FFmpeg conversion failed. Exit code: {Code}", ffmpegProcess.ExitCode);
-                return Ok();
-            }
-
-            _logger.LogInformation("Converted MP4 saved: {File}", targetFile);
-
-            // -------------------------------------------------------------
-            // 4. Права доступа
-            // -------------------------------------------------------------
-            Process.Start("chmod", $"-R 775 \"{targetDir}\"")?.WaitForExit();
-            Process.Start("chown", $"-R boxedstream:boxedstream \"{targetDir}\"")?.WaitForExit();
-
-            _logger.LogInformation("Permissions applied to {Dir}", targetDir);
-
-            // -------------------------------------------------------------
-            // 5. Сохраняем путь в БД
-            // -------------------------------------------------------------
-            stream.RecordPath = targetFile;
-            await _context.SaveChangesAsync();
-
-            _logger.LogInformation(
-                "Stream END saved successfully. User {UserId}, Stream {StreamId}",
-                userId, stream.Id
-            );
-
+            _logger.LogWarning("Invalid stream key format on END: {Key}", name);
             return Ok();
         }
-        catch (Exception ex)
+
+        // Завершаем стрим через сервис (только ставим EndedAt)
+        await _streamService.EndStreamAsync(userId, name);
+
+        // Получаем объект завершенного стрима
+        var stream = await _context.Streams
+            .FirstOrDefaultAsync(s => s.UserId == userId && s.EndedAt != null && s.RecordEnabled);
+
+        if (stream == null)
         {
-            _logger.LogError(ex, "Stream END error for key: {Key}", name);
-            return Ok(); // nginx always expects 200
+            _logger.LogWarning("No ended stream found for user {UserId}", userId);
+            return Ok();
         }
+
+        // -------------------------------------------------------------
+        // 1. ИЩЕМ ФАЙЛ ЗАПИСИ
+        // -------------------------------------------------------------
+        var sourceDir = "/var/www/streamplatform/records/";
+
+        var files = Directory.GetFiles(sourceDir, "*.flv");
+        if (files.Length == 0)
+        {
+            _logger.LogWarning("No FLV files found in records dir");
+            return Ok();
+        }
+
+            // Находим последний записанный файл
+            var newestFile = files
+        .OrderByDescending(f => System.IO.File.GetCreationTimeUtc(f))
+        .First();
+
+            _logger.LogInformation("Found recorded FLV: {File}", newestFile);
+
+        // -------------------------------------------------------------
+        // 2. ГОТОВИМ ЦЕЛЕВУЮ ПАПКУ
+        // -------------------------------------------------------------
+        var targetDir = $"/var/www/streamplatform/media/users/{userId}/streams/{stream.Id}/";
+        Directory.CreateDirectory(targetDir);
+
+        var targetFile = Path.Combine(targetDir, "record.mp4");
+
+        // -------------------------------------------------------------
+        // 3. КОНВЕРТИРУЕМ FLV → MP4
+        // -------------------------------------------------------------
+        var ffmpeg = new ProcessStartInfo
+        {
+            FileName = "ffmpeg",
+            Arguments = $"-y -i \"{newestFile}\" -c copy \"{targetFile}\"",
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        var ffmpegProcess = Process.Start(ffmpeg);
+        ffmpegProcess.WaitForExit();
+
+        if (ffmpegProcess.ExitCode != 0)
+        {
+            _logger.LogError("FFmpeg conversion failed. Exit code: {Code}", ffmpegProcess.ExitCode);
+            return Ok(); // не ломаем nginx
+        }
+
+        _logger.LogInformation("Converted MP4 saved: {File}", targetFile);
+
+        // -------------------------------------------------------------
+        // 4. ПРАВА ДОСТУПА
+        // -------------------------------------------------------------
+        Process.Start("chmod", $"-R 775 \"{targetDir}\"")?.WaitForExit();
+        Process.Start("chown", $"-R boxedstream:boxedstream \"{targetDir}\"")?.WaitForExit();
+
+        _logger.LogInformation("Permissions applied to {Dir}", targetDir);
+
+        // -------------------------------------------------------------
+        // 5. СОХРАНЯЕМ ПУТЬ В БАЗЕ
+        // -------------------------------------------------------------
+        stream.RecordPath = targetFile;
+        await _context.SaveChangesAsync(); // сохраняем напрямую
+
+        _logger.LogInformation("Stream finished and saved: User {UserId}, Stream {StreamId}", userId, stream.Id);
+
+        return Ok();
     }
+    catch (Exception ex)
+    {
+        _logger.LogError(ex, "Stream END error for key: {Key}", name);
+        return Ok(); // nginx must always get 200
+    }
+}
 
 
 
-    private bool TryParseUserIdFromStreamKey(string streamKey, out int userId)
+
+
+private bool TryParseUserIdFromStreamKey(string streamKey, out int userId)
     {
         userId = 0;
         if (string.IsNullOrEmpty(streamKey) || !streamKey.StartsWith("live_"))
