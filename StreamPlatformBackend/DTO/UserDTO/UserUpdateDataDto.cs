@@ -18,13 +18,13 @@ namespace StreamPlatformBackend.DTO.UserDTO
         public string? Nickname { get; set; }
         public string? Email { get; set; }
         public string? ProfileDescription { get; set; }
-        public string? ProfileImage { get; set; }
-        public string? BackgroundImage { get; set; }
 
         // 🔹 для смены пароля
         public string? CurrentPassword { get; set; }
         public string? NewPassword { get; set; }
 
         public List<SocialLinkDto>? SocialLinks { get; set; }  // 🔹 новые соцсети
+
+        public bool RecordEnabled { get; set; }
     }
 }

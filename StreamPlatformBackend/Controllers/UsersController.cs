@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using StreamPlatformBackend.DTO;
 using StreamPlatformBackend.DTO.StreamDTO;
 using StreamPlatformBackend.DTO.UserDTO;
+using StreamPlatformBackend.Models.User;
 using StreamPlatformBackend.Services;
 using System.Security.Claims;
 
@@ -102,8 +103,8 @@ namespace StreamPlatformBackend.Controllers
                     Id = user.Id,
                     Nickname = user.Nickname,
                     ProfileDescription = user.ProfileDescription,
-                    BackgroundImage = user.BackgroundImage,
-                    ProfileImage = user.ProfileImage,
+                    ProfileImage = GetMediaUrl(user.ProfileImage),
+                    BackgroundImage = GetMediaUrl(user.BackgroundImage),
                     RegistrationDate = user.RegistrationDate,
                     IsOnline = user.IsOnline,
                     CurrentStream = user.CurrentStream
@@ -141,8 +142,8 @@ namespace StreamPlatformBackend.Controllers
                     Email = user.Email,
                     Nickname = user.Nickname,
                     ProfileDescription = user.ProfileDescription,
-                    BackgroundImage = user.BackgroundImage,
-                    ProfileImage = user.ProfileImage,
+                    ProfileImage = GetMediaUrl(user.ProfileImage),
+                    BackgroundImage = GetMediaUrl(user.BackgroundImage),
                     RegistrationDate = user.RegistrationDate,
                     CashBalance = user.CashBalance,
                     IsOnline = user.IsOnline
@@ -224,10 +225,10 @@ namespace StreamPlatformBackend.Controllers
             if (dto.File == null || dto.File.Length == 0)
                 return BadRequest(new { message = "Файл не передан" });
 
-            var userId = GetCurrentUserId();
-            var imageUrl = await _userService.UploadUserImageAsync(userId, dto.File, "profile");
+            var user = await GetCurrentUserAsync();
+            var imageUrl = await _userService.UploadUserImageAsync(user.Id, dto.File, "profile");
 
-            return Ok(new { imageUrl });
+            return Ok(new { imageUrl = GetMediaUrl(imageUrl) });
         }
 
 
@@ -258,10 +259,10 @@ namespace StreamPlatformBackend.Controllers
             if (dto.File == null || dto.File.Length == 0)
                 return BadRequest(new { message = "Файл не передан" });
 
-            var userId = GetCurrentUserId();
-            var imageUrl = await _userService.UploadUserImageAsync(userId, dto.File, "background");
+            var user = await GetCurrentUserAsync();
+            var imageUrl = await _userService.UploadUserImageAsync(user.Id, dto.File, "background");
 
-            return Ok(new { imageUrl });
+            return Ok(new { imageUrl = GetMediaUrl(imageUrl) });
         }
 
 
@@ -340,14 +341,30 @@ namespace StreamPlatformBackend.Controllers
         {
             try
             {
+                if (page < 1) page = 1;
+                if (pageSize < 1) pageSize = 25;
+
+                // ✅ Получаем сразу DTO из сервиса
                 var (streams, totalCount) = await _userService.GetOnlineStreamersAsync(page, pageSize);
+
+                // Если нужно добавить StreamId или обработать PreviewUrl через метод контроллера
+                var result = streams.Select(s => new OnlineUserListDto
+                {
+                    Nickname = s.Nickname,
+                    ProfileImage = GetMediaUrl(s.ProfileImage),
+                    IsOnline = s.IsOnline, // Можно брать из сервиса, если там есть
+                    StreamersLeague = s.StreamersLeague,
+                    PreviewUrl = GetStreamMediaUrl(0, s.StreamId ?? 0, s.PreviewUrl), // userId пока 0, если нужно - передавать через сервис
+                    StreamName = s.StreamName,
+                    StreamId = s.StreamId
+                }).ToList();
 
                 return Ok(new
                 {
                     Page = page,
                     PageSize = pageSize,
                     TotalStreams = totalCount,
-                    Streams = streams
+                    Streams = result
                 });
             }
             catch (Exception ex)
@@ -356,6 +373,10 @@ namespace StreamPlatformBackend.Controllers
                 return StatusCode(500, new { message = "Внутренняя ошибка сервера" });
             }
         }
+
+
+
+
 
 
         /// <summary>
@@ -431,6 +452,27 @@ namespace StreamPlatformBackend.Controllers
             return -1;
         }
 
+        // Внутри UsersController
+        private string GetMediaUrl(string? path)
+        {
+            if (string.IsNullOrEmpty(path)) return string.Empty;
+            return path.StartsWith("/") ? path : $"/media/{path}";
+        }
+
+        private async Task<UserModel> GetCurrentUserAsync()
+        {
+            var userId = GetCurrentUserId();
+            var user = await _userService.GetUserByIdAsync(userId);
+            if (user == null) throw new ArgumentException("Пользователь не найден");
+            return user;
+        }
+
+        private string GetStreamMediaUrl(int userId, int streamId, string? filename)
+        {
+            if (string.IsNullOrEmpty(filename)) return string.Empty;
+            return filename.StartsWith("/") ? filename : $"/media/users/{userId}/streams/{streamId}/{filename}";
+        }
+
 
         /// <summary>
         /// Получить историю стримов пользователя по никнейму (публично, без авторизации).
@@ -456,19 +498,14 @@ namespace StreamPlatformBackend.Controllers
                 if (user == null)
                     return NotFound(new { message = "Пользователь не найден" });
 
-                // Получаем все стримы пользователя
                 var streams = await _userService.GetUserStreamHistoryAsync(user.Id);
-
-                // Сортировка по дате начала стрима (самые новые первыми)
                 var sortedStreams = streams.OrderByDescending(s => s.StartedAt).ToList();
 
-                // Пагинация
                 var pagedStreams = sortedStreams
                     .Skip((page - 1) * pageSize)
                     .Take(pageSize)
                     .ToList();
 
-                // Формируем DTO
                 var result = pagedStreams.Select(s => new StreamInfoDto
                 {
                     StreamId = s.Id,
@@ -476,7 +513,7 @@ namespace StreamPlatformBackend.Controllers
                     StreamerId = s.UserId,
                     StreamerName = s.User.Nickname,
                     Tags = s.Tags,
-                    PreviewUrl = s.PreviewUrl,
+                    PreviewUrl = GetStreamMediaUrl(s.UserId, s.Id, s.PreviewUrl),
                     HlsUrl = $"/hls/{s.User.StreamKey}.m3u8",
                     TotalViews = s.TotalViews,
                     StartedAt = s.StartedAt,

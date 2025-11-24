@@ -20,6 +20,8 @@ namespace StreamPlatformBackend.Services
         Task<bool> IsUserStreamingAsync(int userId);
         Task<int> IncrementViewCountAsync(int streamId);
         Task<StreamModel?> GetStreamByUserIdAsync(int userId);
+        Task UpdateStreamRecordPathAsync(int userId, string filePath);
+
     }
 
     public class StreamService : IStreamService
@@ -61,8 +63,56 @@ namespace StreamPlatformBackend.Services
                 Tags = user.LastTags ?? new List<string>(),
                 PreviewUrl = user.LastPreviewUrl,
                 StartedAt = DateTime.UtcNow,
-                TotalViews = 0
+                TotalViews = 0,
+
+                // Подтягиваем настройку пользователя
+                RecordEnabled = user.RecordEnabled
             };
+
+            if(user.RecordEnabled)
+{
+                var recordDir = $"/var/www/streamplatform/media/users/{userId}/streams/{stream.Id}/";
+
+                try
+                {
+                    if (!Directory.Exists(recordDir))
+                        Directory.CreateDirectory(recordDir);
+
+                    // chmod 775
+                    var chmod = new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = "chmod",
+                        Arguments = $"-R 775 \"{recordDir}\"",
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    };
+                    System.Diagnostics.Process.Start(chmod)?.WaitForExit();
+
+                    // chown на пользователя приложения
+                    var chown = new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = "chown",
+                        Arguments = $"-R boxedstream:boxedstream \"{recordDir}\"",
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    };
+                    System.Diagnostics.Process.Start(chown)?.WaitForExit();
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Ошибка при создании папки для записи стрима {StreamId}", stream.Id);
+                    stream.RecordEnabled = false; // чтобы не пытаться записывать
+                }
+
+                stream.RecordPath = Path.Combine(recordDir, "record.mp4");
+                stream.RecordEnabled = true; // активируем запись
+            }
+
+
 
             _context.Streams.Add(stream);
             user.CurrentStream = stream;
@@ -208,5 +258,48 @@ namespace StreamPlatformBackend.Services
             var parts = streamKey.Split('_');
             return parts.Length >= 2 && int.TryParse(parts[1], out userId);
         }
+
+
+        public async Task UpdateStreamRecordPathAsync(int userId, string filePath)
+        {
+            try
+            {
+                _logger.LogInformation(
+                    "Updating record path for user {UserId}: {Path}",
+                    userId, filePath
+                );
+
+                var stream = await _context.Streams
+                    .FirstOrDefaultAsync(s =>
+                        s.UserId == userId &&
+                        s.StartedAt != null &&
+                        s.EndedAt == null // IsLive
+                    );
+
+                if (stream == null)
+                {
+                    _logger.LogWarning("No live stream found for user {UserId}", userId);
+                    return;
+                }
+
+                stream.RecordPath = filePath;
+                stream.EndedAt = DateTime.UtcNow; // запись завершена -> стрим завершён
+
+                await _context.SaveChangesAsync();
+
+                _logger.LogInformation(
+                    "Record path saved successfully for live stream {StreamId}",
+                    stream.Id
+                );
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex,
+                    "Error while updating record path for user {UserId}. File: {Path}",
+                    userId, filePath);
+                throw;
+            }
+        }
+
     }
 }

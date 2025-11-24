@@ -56,14 +56,16 @@ namespace StreamPlatformBackend.Services
         private readonly ILogger<UserService> _logger;
         private readonly INotificationRepository _notificationRepository;
         private readonly INotificationSender _notificationSender;
+        private readonly string _mediaPath;
 
-        public UserService(AppDbContext context, IPasswordHasherService passwordHasher, INotificationRepository notificationRepository, INotificationSender notificationSender, ILogger<UserService> logger)
+        public UserService(AppDbContext context, IConfiguration configuration, IPasswordHasherService passwordHasher, INotificationRepository notificationRepository, INotificationSender notificationSender, ILogger<UserService> logger)
         {
             _context = context;
             _passwordHasher = passwordHasher;
             _notificationRepository = notificationRepository;
             _notificationSender = notificationSender;
             _logger = logger;
+            _mediaPath = configuration["Media:Path"];
         }
 
 
@@ -208,19 +210,6 @@ namespace StreamPlatformBackend.Services
                     hasChanges = true;
                 }
 
-                // 🔹 Images
-                if (!string.IsNullOrEmpty(dto.ProfileImage) && user.ProfileImage != dto.ProfileImage)
-                {
-                    user.ProfileImage = dto.ProfileImage;
-                    hasChanges = true;
-                }
-
-                if (!string.IsNullOrEmpty(dto.BackgroundImage) && user.BackgroundImage != dto.BackgroundImage)
-                {
-                    user.BackgroundImage = dto.BackgroundImage;
-                    hasChanges = true;
-                }
-
                 // 🔹 SocialLinks
                 if (dto.SocialLinks != null)
                 {
@@ -261,6 +250,13 @@ namespace StreamPlatformBackend.Services
                     hasChanges = true;
                 }
 
+                // 🔹 RecordEnabled
+                if (user.RecordEnabled != dto.RecordEnabled)
+                {
+                    user.RecordEnabled = dto.RecordEnabled;
+                    hasChanges = true;
+                }
+
                 if (hasChanges)
                     await _context.SaveChangesAsync();
             }
@@ -292,18 +288,20 @@ namespace StreamPlatformBackend.Services
             if (user == null)
                 throw new ArgumentException("Пользователь не найден");
 
-            // Allowed formats
+            // Разрешённые расширения
             var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".webp" };
             var extension = Path.GetExtension(file.FileName).ToLower();
 
             if (!allowedExtensions.Contains(extension))
-                throw new ArgumentException("Разрешены только: JPG, PNG, WEBP");
+                throw new ArgumentException("Разрешены только форматы: JPG, PNG, WEBP");
 
-            // Folder: wwwroot/uploads/users/{id}/
-            var folderPath = Path.Combine("wwwroot", "uploads", "users", userId.ToString());
+            // Папка для хранения медиа конкретного пользователя
+            // Берём путь из конфигурации, fallback если не задан
+            string baseMediaPath = _mediaPath ?? "/var/www/streamplatform/media";
+            var folderPath = Path.Combine(baseMediaPath, "users", userId.ToString());
             Directory.CreateDirectory(folderPath);
 
-            // File name
+            // Имя файла
             string fileName = type switch
             {
                 "profile" => $"profile{extension}",
@@ -313,23 +311,22 @@ namespace StreamPlatformBackend.Services
 
             var fullPath = Path.Combine(folderPath, fileName);
 
-            // Save file
+            // Сохраняем файл
             using (var stream = new FileStream(fullPath, FileMode.Create))
                 await file.CopyToAsync(stream);
 
-            // URL for frontend
-            string url = $"/uploads/users/{userId}/{fileName}";
+            // URL для фронтенда (через Nginx /media/)
+            string url = $"/media/users/{userId}/{fileName}";
 
-            if (type == "profile")
-                user.ProfileImage = url;
-
-            if (type == "background")
-                user.BackgroundImage = url;
+            // Обновляем поля пользователя
+            if (type == "profile") user.ProfileImage = url;
+            if (type == "background") user.BackgroundImage = url;
 
             await _context.SaveChangesAsync();
 
             return url;
         }
+
 
 
 
@@ -405,7 +402,7 @@ namespace StreamPlatformBackend.Services
                     Nickname = u.Nickname,
                     ProfileImage = u.ProfileImage,
                     StreamersLeague = u.StreamersLeague,
-                    PreviewlUrl = u.CurrentStream.PreviewUrl,
+                    PreviewUrl = u.CurrentStream.PreviewUrl,
                     StreamName = u.CurrentStream.StreamName
                 })
                 .ToListAsync();
@@ -433,7 +430,7 @@ namespace StreamPlatformBackend.Services
                     ProfileImage = s.TargetUser.ProfileImage,
                     IsOnline = s.TargetUser.IsOnline,
                     StreamersLeague = s.TargetUser.StreamersLeague,
-                    PreviewlUrl = s.TargetUser.CurrentStream != null
+                    PreviewUrl = s.TargetUser.CurrentStream != null
                         ? s.TargetUser.CurrentStream.PreviewUrl
                         : string.Empty,
 

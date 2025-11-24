@@ -29,13 +29,16 @@ namespace StreamPlatformBackend.Models.Stream
         public DateTime? StartedAt { get; set; }
         public DateTime? EndedAt { get; set; }
 
-        public bool IsActive => StartedAt != null && EndedAt == null;
+        public bool IsLive => StartedAt != null && EndedAt == null;
 
         // ---------- Категория ----------
         public int? CategoryId { get; set; } // nullable, чтобы старые стримы без категории не ломались
 
         [ForeignKey(nameof(CategoryId))]
         public virtual StreamCategory? Category { get; set; }
+
+        public bool RecordEnabled { get; set; } // по умолчанию записываем
+        public string? RecordPath { get; set; }         // путь к mp4/mkv
     }
 }
 
