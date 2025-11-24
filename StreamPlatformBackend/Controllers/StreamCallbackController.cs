@@ -1,4 +1,6 @@
 ﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using StreamPlatformBackend.Data;
 using StreamPlatformBackend.Services;
 using System.Diagnostics;
 
@@ -8,11 +10,13 @@ public class StreamCallbackController : ControllerBase
 {
     private readonly IStreamService _streamService;
     private readonly ILogger<StreamCallbackController> _logger;
+    private readonly AppDbContext _context;
 
-    public StreamCallbackController(IStreamService streamService, ILogger<StreamCallbackController> logger)
+    public StreamCallbackController(IStreamService streamService, ILogger<StreamCallbackController> logger, AppDbContext context)
     {
         _streamService = streamService;
         _logger = logger;
+        _context = context;
     }
 
     // Вызывается nginx когда OBS начинает трансляцию
@@ -111,47 +115,51 @@ public class StreamCallbackController : ControllerBase
     {
         try
         {
-            _logger.LogInformation("=== STREAM END === Raw key: {Key}", name);
+            _logger.LogInformation("=== STREAM END CALLBACK === Raw key: {Key}", name);
 
             if (string.IsNullOrEmpty(name))
                 return Ok();
 
+            // Парсим userId из stream key
             if (!TryParseUserIdFromStreamKey(name, out int userId))
             {
                 _logger.LogWarning("Invalid stream key format on END: {Key}", name);
                 return Ok();
             }
 
-            // Завершаем стрим в базе
-            var stream = await _streamService.EndStreamAsync(userId, name);
+            // Закрываем стрим в БД
+            await _streamService.EndStreamAsync(userId, name);
+
+            // Ищем завершённый стрим
+            var stream = await _context.Streams
+                .FirstOrDefaultAsync(s =>
+                    s.UserId == userId &&
+                    s.EndedAt != null &&
+                    s.RecordEnabled
+                );
 
             if (stream == null)
             {
-                _logger.LogWarning("EndStreamAsync returned null for user {UserId}", userId);
+                _logger.LogWarning("No ended stream found for user {UserId}", userId);
                 return Ok();
             }
 
             // -------------------------------------------------------------
-            // 1. ИЩЕМ ФАЙЛ ЗАПИСИ
+            // 1. Находим файл, записанный nginx
             // -------------------------------------------------------------
             var sourceDir = "/var/www/streamplatform/records/";
+            var sourceFile = Path.Combine(sourceDir, $"{name}.flv");
 
-            var files = Directory.GetFiles(sourceDir, "*.flv");
-            if (files.Length == 0)
+            if (!System.IO.File.Exists(sourceFile))
             {
-                _logger.LogWarning("No FLV files found in records dir");
+                _logger.LogWarning("Recorded file not found: {File}", sourceFile);
                 return Ok();
             }
 
-            // Находим последний записанный файл
-            var newestFile = files
-                .OrderByDescending(File.GetCreationTimeUtc)
-                .First();
-
-            _logger.LogInformation("Found recorded FLV: {File}", newestFile);
+            _logger.LogInformation("Found recorded FLV: {File}", sourceFile);
 
             // -------------------------------------------------------------
-            // 2. ГОТОВИМ ЦЕЛЕВУЮ ПАПКУ
+            // 2. Создаём папку назначения
             // -------------------------------------------------------------
             var targetDir = $"/var/www/streamplatform/media/users/{userId}/streams/{stream.Id}/";
             Directory.CreateDirectory(targetDir);
@@ -159,12 +167,12 @@ public class StreamCallbackController : ControllerBase
             var targetFile = Path.Combine(targetDir, "record.mp4");
 
             // -------------------------------------------------------------
-            // 3. КОНВЕРТИРУЕМ FLV → MP4
+            // 3. Конвертируем FLV → MP4
             // -------------------------------------------------------------
             var ffmpeg = new ProcessStartInfo
             {
                 FileName = "ffmpeg",
-                Arguments = $"-y -i \"{newestFile}\" -c copy \"{targetFile}\"",
+                Arguments = $"-y -i \"{sourceFile}\" -c copy \"{targetFile}\"",
                 RedirectStandardError = true,
                 RedirectStandardOutput = true,
                 UseShellExecute = false,
@@ -177,13 +185,13 @@ public class StreamCallbackController : ControllerBase
             if (ffmpegProcess.ExitCode != 0)
             {
                 _logger.LogError("FFmpeg conversion failed. Exit code: {Code}", ffmpegProcess.ExitCode);
-                return Ok(); // не ломаем nginx
+                return Ok();
             }
 
             _logger.LogInformation("Converted MP4 saved: {File}", targetFile);
 
             // -------------------------------------------------------------
-            // 4. ПРАВА ДОСТУПА
+            // 4. Права доступа
             // -------------------------------------------------------------
             Process.Start("chmod", $"-R 775 \"{targetDir}\"")?.WaitForExit();
             Process.Start("chown", $"-R boxedstream:boxedstream \"{targetDir}\"")?.WaitForExit();
@@ -191,21 +199,26 @@ public class StreamCallbackController : ControllerBase
             _logger.LogInformation("Permissions applied to {Dir}", targetDir);
 
             // -------------------------------------------------------------
-            // 5. СОХРАНЯЕМ ПУТЬ В БАЗЕ
+            // 5. Сохраняем путь в БД
             // -------------------------------------------------------------
             stream.RecordPath = targetFile;
-            await _streamService.UpdateStreamRecordPathAsync(stream);
+            await _context.SaveChangesAsync();
 
-            _logger.LogInformation("Stream finished and saved: User {UserId}, Stream {StreamId}", userId, stream.Id);
+            _logger.LogInformation(
+                "Stream END saved successfully. User {UserId}, Stream {StreamId}",
+                userId, stream.Id
+            );
 
             return Ok();
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Stream END error for key: {Key}", name);
-            return Ok(); // nginx must always get 200
+            return Ok(); // nginx always expects 200
         }
     }
+
+
 
     private bool TryParseUserIdFromStreamKey(string streamKey, out int userId)
     {
