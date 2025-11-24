@@ -280,7 +280,7 @@ public class StreamCallbackController : ControllerBase
             // -------------------------------------------------------------
             var ffmpeg = new ProcessStartInfo
             {
-                FileName = "ffmpeg",
+                FileName = "/usr/bin/ffmpeg",
                 Arguments = $"-y -i \"{newestFile}\" -c copy \"{targetFile}\"",
                 RedirectStandardError = true,
                 RedirectStandardOutput = true,
