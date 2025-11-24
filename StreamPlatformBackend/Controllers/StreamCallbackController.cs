@@ -256,10 +256,11 @@ public class StreamCallbackController : ControllerBase
             var sourceDir = "/var/www/streamplatform/records/";
             var files = Directory.GetFiles(sourceDir, "*.flv");
 
-            if (files.Length == 0)
+
+            if (!Directory.Exists(sourceDir))
             {
-                _logger.LogWarning("No FLV files found in records dir");
-                return Ok();
+                _logger.LogWarning("Records directory not found, creating: {Dir}", sourceDir);
+                Directory.CreateDirectory(sourceDir);
             }
 
             // Находим последний записанный файл
