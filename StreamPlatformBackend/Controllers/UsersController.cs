@@ -475,19 +475,26 @@ namespace StreamPlatformBackend.Controllers
 
 
         /// <summary>
-        /// Получить историю стримов пользователя по никнейму (публично, без авторизации).
+        /// Получает историю стримов указанного пользователя.
+        /// Возвращает только стримы, для которых существует запись (архив).
+        /// Поддерживает пагинацию.
         /// </summary>
-        /// <remarks>
-        /// Возвращает список всех стримов пользователя с пагинацией.
-        /// </remarks>
-        /// <param name="nickname">Никнейм пользователя.</param>
-        /// <param name="page">Номер страницы (по умолчанию 1).</param>
-        /// <param name="pageSize">Количество стримов на страницу (по умолчанию 25).</param>
-        /// <response code="200">Возвращает список стримов пользователя с пагинацией.</response>
-        /// <response code="404">Пользователь с указанным никнеймом не найден.</response>
-        /// <response code="500">Внутренняя ошибка сервера.</response>
+        /// <param name="nickname">Никнейм стримера.</param>
+        /// <param name="page">Номер страницы (начиная с 1).</param>
+        /// <param name="pageSize">Количество элементов на странице.</param>
+        /// <returns>
+        /// Объект с информацией о странице и списком стримов:
+        /// <para>• Page — номер текущей страницы</para>
+        /// <para>• PageSize — количество элементов на странице</para>
+        /// <para>• TotalStreams — общее количество стримов с записью</para>
+        /// <para>• Streams — массив объектов StreamHistoryItemDto</para>
+        /// </returns>
+        /// <response code="200">История стримов успешно получена.</response>
+        /// <response code="404">Пользователь с таким никнеймом не найден.</response>
+        /// <response code="500">Ошибка на стороне сервера.</response>
         [HttpGet("{nickname}/streams/history")]
-        public async Task<IActionResult> GetUserStreamHistory(string nickname, int page = 1, int pageSize = 25)
+        public async Task<IActionResult> GetUserStreamHistory(
+            string nickname, int page = 1, int pageSize = 25)
         {
             try
             {
@@ -498,43 +505,49 @@ namespace StreamPlatformBackend.Controllers
                 if (user == null)
                     return NotFound(new { message = "Пользователь не найден" });
 
+                // Получаем все стримы пользователя
                 var streams = await _userService.GetUserStreamHistoryAsync(user.Id);
-                var sortedStreams = streams.OrderByDescending(s => s.StartedAt).ToList();
 
-                var pagedStreams = sortedStreams
+                // Фильтруем только стримы, где есть запись
+                var recordedStreams = streams
+                    .Where(s => !string.IsNullOrEmpty(s.RecordPath))
+                    .OrderByDescending(s => s.StartedAt)
+                    .ToList();
+
+                // Пагинация
+                var pagedStreams = recordedStreams
                     .Skip((page - 1) * pageSize)
                     .Take(pageSize)
                     .ToList();
 
-                var result = pagedStreams.Select(s => new StreamInfoDto
+                // DTO
+                var result = pagedStreams.Select(s => new StreamHistoryItemDto
                 {
-                    StreamId = s.Id,
-                    StreamName = s.StreamName,
-                    StreamerId = s.UserId,
-                    StreamerName = s.User.Nickname,
-                    Tags = s.Tags,
-                    PreviewUrl = GetStreamMediaUrl(s.UserId, s.Id, s.PreviewUrl),
-                    HlsUrl = $"/hls/{s.User.StreamKey}.m3u8",
-                    TotalViews = s.TotalViews,
+                    Id = s.Id,
                     StartedAt = s.StartedAt,
                     EndedAt = s.EndedAt,
-                    IsLive = s.EndedAt == null
+                    HasRecord = !string.IsNullOrEmpty(s.RecordPath),
+                    RecordPath = s.RecordPath
                 }).ToList();
 
                 return Ok(new
                 {
                     Page = page,
                     PageSize = pageSize,
-                    TotalStreams = sortedStreams.Count,
+                    TotalStreams = recordedStreams.Count,
                     Streams = result
                 });
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Ошибка при получении истории стримов пользователя {Nickname}", nickname);
+                _logger.LogError(ex,
+                    "Ошибка при получении истории стримов пользователя {Nickname}", nickname);
+
                 return StatusCode(500, new { message = "Внутренняя ошибка сервера" });
             }
         }
+
+
 
 
 

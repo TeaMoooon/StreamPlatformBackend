@@ -1,5 +1,7 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using StreamPlatformBackend.Data;
 using StreamPlatformBackend.DTO.StreamDTO;
 using StreamPlatformBackend.Services;
 using System.Security.Claims;
@@ -12,12 +14,14 @@ public class StreamController : ControllerBase
     private readonly IStreamService _streamService;
     private readonly IUserService _userService;
     private readonly ILogger<StreamController> _logger;
+    private readonly AppDbContext _context;
 
-    public StreamController(IStreamService streamService, IUserService userService, ILogger<StreamController> logger)
+    public StreamController(AppDbContext context, IStreamService streamService, IUserService userService, ILogger<StreamController> logger)
     {
         _streamService = streamService;
         _userService = userService;
         _logger = logger;
+        _context = context;
     }
 
     /// <summary>Обновляет текущий стрим пользователя</summary>
@@ -44,4 +48,36 @@ public class StreamController : ControllerBase
     {
         return int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? "0");
     }
+
+
+    /// <summary>
+    /// Получить видео/стрим для просмотра
+    /// </summary>
+    /// <param name="streamId">ID стрима</param>
+    /// <returns>Ссылка на HLS поток или MP4 запись</returns>
+    [HttpGet("streams/{streamId}/watch")]
+    public async Task<IActionResult> WatchStream(int streamId)
+    {
+        var stream = await _context.Streams.Include(s => s.User)
+                                           .FirstOrDefaultAsync(s => s.Id == streamId);
+        if (stream == null)
+            return NotFound();
+
+        if (stream.EndedAt == null)
+        {
+            // Стрим в эфире — возвращаем HLS ссылку
+            var hlsUrl = $"/hls/{stream.User.StreamKey}.m3u8";
+            return Ok(new { Type = "live", Url = hlsUrl });
+        }
+
+        if (stream.RecordEnabled && !string.IsNullOrEmpty(stream.RecordPath))
+        {
+            // Завершённый стрим — возвращаем относительный путь к записи
+            var recordUrl = $"/media/users/{stream.UserId}/streams/{stream.Id}/record.mp4";
+            return Ok(new { Type = "record", Url = recordUrl });
+        }
+
+        return BadRequest(new { message = "Стрим недоступен" });
+    }
+
 }
