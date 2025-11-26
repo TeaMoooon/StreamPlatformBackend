@@ -68,8 +68,11 @@ namespace StreamPlatformBackend.Services
                 // Подтягиваем настройку пользователя
                 RecordEnabled = user.RecordEnabled
             };
+            // Добавляем стрим в контекст, чтобы EF присвоил Id
+            _context.Streams.Add(stream);
+            await _context.SaveChangesAsync(); // теперь stream.Id реально присвоен
 
-            if(user.RecordEnabled)
+            if (user.RecordEnabled)
 {
                 var recordDir = $"/var/www/streamplatform/media/users/{userId}/streams/{stream.Id}/";
 
@@ -114,7 +117,6 @@ namespace StreamPlatformBackend.Services
 
 
 
-            _context.Streams.Add(stream);
             user.CurrentStream = stream;
             user.IsOnline = true;
 
