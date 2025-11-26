@@ -8,7 +8,6 @@ using System.Security.Claims;
 
 [ApiController]
 [Route("api/[controller]")]
-[Authorize]
 public class StreamController : ControllerBase
 {
     private readonly IStreamService _streamService;
@@ -25,6 +24,7 @@ public class StreamController : ControllerBase
     }
 
     /// <summary>Обновляет текущий стрим пользователя</summary>
+    [Authorize]
     [HttpPut]
     public async Task<IActionResult> UpdateStream([FromBody] StreamUpdateDto updateDto)
     {
