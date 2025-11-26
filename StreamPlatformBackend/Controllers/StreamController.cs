@@ -51,33 +51,45 @@ public class StreamController : ControllerBase
 
 
     /// <summary>
-    /// Получить видео/стрим для просмотра
+    /// Получить видео/стрим для просмотра.
+    /// Если стрим активный — возвращает HLS.
+    /// Если завершён — возвращает ссылку на MP4.
     /// </summary>
     /// <param name="streamId">ID стрима</param>
-    /// <returns>Ссылка на HLS поток или MP4 запись</returns>
+    /// <returns>Тип и URL для просмотра</returns>
     [HttpGet("streams/{streamId}/watch")]
     public async Task<IActionResult> WatchStream(int streamId)
     {
-        var stream = await _context.Streams.Include(s => s.User)
-                                           .FirstOrDefaultAsync(s => s.Id == streamId);
-        if (stream == null)
-            return NotFound();
+        var stream = await _context.Streams
+            .Include(s => s.User)
+            .FirstOrDefaultAsync(s => s.Id == streamId);
 
+        if (stream == null)
+            return NotFound(new { message = "Стрим не найден" });
+
+        // --- Активный стрим ---
         if (stream.EndedAt == null)
         {
-            // Стрим в эфире — возвращаем HLS ссылку
             var hlsUrl = $"/hls/{stream.User.StreamKey}.m3u8";
-            return Ok(new { Type = "live", Url = hlsUrl });
+            return Ok(new { type = "live", url = hlsUrl });
         }
 
+        // --- Стрим завершён ---
         if (stream.RecordEnabled && !string.IsNullOrEmpty(stream.RecordPath))
         {
-            // Завершённый стрим — возвращаем относительный путь к записи
-            var recordUrl = $"/media/users/{stream.UserId}/streams/{stream.Id}/record.mp4";
-            return Ok(new { Type = "record", Url = recordUrl });
+            // Проверяем, что файл существует
+            if (!System.IO.File.Exists(stream.RecordPath))
+                return BadRequest(new { message = "Запись отсутствует" });
+
+            // Превращаем абсолютный путь в URL
+            // /var/www/streamplatform/media/... → /media/...
+            var url = stream.RecordPath.Replace("/var/www/streamplatform", "");
+
+            return Ok(new { type = "record", url });
         }
 
         return BadRequest(new { message = "Стрим недоступен" });
     }
+
 
 }
