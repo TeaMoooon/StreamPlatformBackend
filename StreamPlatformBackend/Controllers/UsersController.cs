@@ -107,7 +107,12 @@ namespace StreamPlatformBackend.Controllers
                     BackgroundImage = GetMediaUrl(user.BackgroundImage),
                     RegistrationDate = user.RegistrationDate,
                     IsOnline = user.IsOnline,
-                    CurrentStream = user.CurrentStream
+                    CurrentStream = user.CurrentStream,
+                    SocialLinks = user.SocialLinks.Select(link => new UserSocialLinkDto{
+                                    Id = link.Id,
+                                    Platform = link.Platform,
+                                    Url = link.Url
+                                    }).ToList()
                 };
 
                 return Ok(dto);
@@ -146,7 +151,13 @@ namespace StreamPlatformBackend.Controllers
                     BackgroundImage = GetMediaUrl(user.BackgroundImage),
                     RegistrationDate = user.RegistrationDate,
                     CashBalance = user.CashBalance,
-                    IsOnline = user.IsOnline
+                    IsOnline = user.IsOnline,
+                    SocialLinks = user.SocialLinks.Select(link => new UserSocialLinkDto
+                    {
+                        Id = link.Id,
+                        Platform = link.Platform,
+                        Url = link.Url
+                    }).ToList()
                 };
 
                 return Ok(dto);

@@ -555,17 +555,30 @@ namespace StreamPlatformBackend.Services
 
         public async Task<UserModel?> GetUserByEmailAsync(string email)
         {
-            return await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Email == email.ToLower());
+            return await _context.Users
+                .AsNoTracking()
+                .Include(u => u.SocialLinks)
+                .Include(u => u.CurrentStream)
+                .FirstOrDefaultAsync(u => u.Email == email.ToLower());
         }
 
         public async Task<UserModel?> GetUserByNameAsync(string name)
         {
-            return await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Nickname == name.ToLower());
+            return await _context.Users
+                .AsNoTracking()
+                .Include(u => u.SocialLinks)
+                .Include(u => u.CurrentStream)
+                .FirstOrDefaultAsync(u => u.Nickname.ToLower() == name.ToLower());
         }
+
 
         public async Task<UserModel?> GetUserByIdAsync(int id)
         {
-            return await _context.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == id);
+            return await _context.Users
+                .AsNoTracking()
+                .Include(u => u.SocialLinks)
+                .Include(u => u.CurrentStream)
+                .FirstOrDefaultAsync(u => u.Id == id);
         }
 
 
