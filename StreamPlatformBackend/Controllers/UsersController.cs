@@ -109,7 +109,6 @@ namespace StreamPlatformBackend.Controllers
                     IsOnline = user.IsOnline,
                     CurrentStream = user.CurrentStream,
                     SocialLinks = user.SocialLinks.Select(link => new UserSocialLinkDto{
-                                    Id = link.Id,
                                     Platform = link.Platform,
                                     Url = link.Url
                                     }).ToList()
@@ -154,7 +153,6 @@ namespace StreamPlatformBackend.Controllers
                     IsOnline = user.IsOnline,
                     SocialLinks = user.SocialLinks.Select(link => new UserSocialLinkDto
                     {
-                        Id = link.Id,
                         Platform = link.Platform,
                         Url = link.Url
                     }).ToList()
