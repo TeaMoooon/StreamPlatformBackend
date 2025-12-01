@@ -254,13 +254,20 @@ public class StreamCallbackController : ControllerBase
             // 1. ИЩЕМ ФАЙЛ ЗАПИСИ
             // -------------------------------------------------------------
             var sourceDir = "/var/www/streamplatform/records/";
-            var files = Directory.GetFiles(sourceDir, "*.flv");
 
 
             if (!Directory.Exists(sourceDir))
             {
                 _logger.LogWarning("Records directory not found, creating: {Dir}", sourceDir);
                 Directory.CreateDirectory(sourceDir);
+            }
+
+            var files = Directory.GetFiles(sourceDir, "*.flv");
+
+            if (files.Length == 0)
+            {
+                _logger.LogWarning("No FLV files found in records dir: {Dir}", sourceDir);
+                return Ok(); // ничего не конвертируем, но nginx всё равно получит 200
             }
 
             // Находим последний записанный файл
