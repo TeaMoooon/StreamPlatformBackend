@@ -1,4 +1,5 @@
 ﻿using StreamPlatformBackend.Models.Stream;
+using StreamPlatformBackend.Models.User;
 
 namespace StreamPlatformBackend.DTO.UserDTO
 {
@@ -19,6 +20,9 @@ namespace StreamPlatformBackend.DTO.UserDTO
         public bool IsOnline { get; set; }
 
         public virtual StreamModel? CurrentStream { get; set; }
+
+        public ICollection<UserSocialLinkDto> SocialLinks { get; set; } = new List<UserSocialLinkDto>();
+
 
     }
 }
