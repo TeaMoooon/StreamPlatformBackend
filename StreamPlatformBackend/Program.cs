@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using Npgsql;
@@ -177,7 +178,13 @@ app.UseCors("AllowAll");
 
 app.UseHttpsRedirection();
 
-app.UseStaticFiles();
+var mediaPath = builder.Configuration["Media:Path"];
+
+app.UseStaticFiles(new StaticFileOptions
+{
+    FileProvider = new PhysicalFileProvider(mediaPath),
+    RequestPath = "/media"
+});
 
 app.UseAuthentication();
 app.UseAuthorization();
