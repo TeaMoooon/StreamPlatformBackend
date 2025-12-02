@@ -107,8 +107,6 @@ public class StreamCallbackController : ControllerBase
         }
     }
 
-
-
     [HttpPost("end")]
     public async Task<IActionResult> OnStreamEnd([FromForm] string name)
     {
@@ -146,7 +144,7 @@ public class StreamCallbackController : ControllerBase
             // -------------------------------------------------------------
             // 1. ИЩЕМ ФАЙЛ ЗАПИСИ
             // -------------------------------------------------------------
-            var sourceDir = "/var/www/streamplatform/records_live/";
+            var sourceDir = "/var/www/streamplatform/records/";
 
 
             if (!Directory.Exists(sourceDir))
