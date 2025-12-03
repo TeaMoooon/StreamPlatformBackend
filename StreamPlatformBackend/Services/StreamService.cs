@@ -6,6 +6,7 @@ using StreamPlatformBackend.Models.Enums;
 using StreamPlatformBackend.Models.Stream;
 using StreamPlatformBackend.Models.User;
 using StreamPlatformBackend.Services.NotificationService;
+using System.Diagnostics;
 using System.Text.Json;
 
 namespace StreamPlatformBackend.Services
@@ -21,7 +22,7 @@ namespace StreamPlatformBackend.Services
         Task<int> IncrementViewCountAsync(int streamId);
         Task<StreamModel?> GetStreamByUserIdAsync(int userId);
         Task UpdateStreamRecordPathAsync(int userId, string filePath);
-
+        Task UpdateHeartbeatAsync(int userId, string? streamKey = null);
     }
 
     public class StreamService : IStreamService
@@ -31,7 +32,11 @@ namespace StreamPlatformBackend.Services
         private readonly INotificationRepository _notificationRepository;
         private readonly INotificationSender _notificationSender;
 
-        public StreamService(AppDbContext context,INotificationRepository notificationRepository,INotificationSender notificationSender,ILogger<StreamService> logger)
+        private readonly TimeSpan ReconnectWindow = TimeSpan.FromSeconds(30);
+        private readonly string RecordsBase = "/var/www/streamplatform/records/";
+        private readonly string MediaBase = "/var/www/streamplatform/media/users/";
+
+        public StreamService(AppDbContext context, INotificationRepository notificationRepository, INotificationSender notificationSender, ILogger<StreamService> logger)
         {
             _context = context;
             _notificationRepository = notificationRepository;
@@ -39,160 +44,189 @@ namespace StreamPlatformBackend.Services
             _logger = logger;
         }
 
+        public async Task<StreamModel?> GetActiveStreamForUserAsync(int userId)
+        {
+            return await _context.Streams
+                .Where(s => s.UserId == userId && s.EndedAt == null)
+                .OrderByDescending(s => s.StartedAt)
+                .FirstOrDefaultAsync();
+        }
+
         public async Task<StreamModel> StartStreamAsync(int userId, string streamKey)
         {
-            // Получаем пользователя вместе с текущим стримом
-            var user = await _context.Users
-                .Include(u => u.CurrentStream)
-                .FirstOrDefaultAsync(u => u.Id == userId);
+            var now = DateTime.UtcNow;
+            var user = await _context.Users.Include(u => u.CurrentStream).FirstOrDefaultAsync(u => u.Id == userId);
+            if (user == null) throw new ArgumentException($"User {userId} not found");
+            if (user.StreamKey != streamKey) throw new UnauthorizedAccessException("Stream key mismatch");
 
-            if (user == null)
-                throw new ArgumentException($"User with ID {userId} not found");
-            if (user.StreamKey != streamKey)
-                throw new UnauthorizedAccessException("Invalid stream key");
+            var active = await GetActiveStreamForUserAsync(userId);
+            if (active != null)
+            {
+                active.LastPingAt = now;
+                user.CurrentStream = active;
+                user.IsOnline = true;
+                await _context.SaveChangesAsync();
+                return active;
+            }
 
-            // Если уже есть активный стрим — возвращаем его
-            if (user.CurrentStream != null && user.CurrentStream.EndedAt == null)
-                return user.CurrentStream;
+            var last = await _context.Streams.Where(s => s.UserId == userId).OrderByDescending(s => s.StartedAt).FirstOrDefaultAsync();
+            if (last != null && last.EndedAt != null && (now - last.EndedAt.Value) <= ReconnectWindow)
+            {
+                last.EndedAt = null;
+                last.LastPingAt = now;
+                user.CurrentStream = last;
+                user.IsOnline = true;
+                await _context.SaveChangesAsync();
+                return last;
+            }
 
-            // Создаём новый стрим
             var stream = new StreamModel
             {
-                UserId = user.Id,
+                UserId = userId,
                 StreamName = user.LastStreamName ?? $"{user.Nickname}'s Stream",
                 Tags = user.LastTags ?? new List<string>(),
                 PreviewUrl = user.LastPreviewUrl,
-                StartedAt = DateTime.UtcNow,
+                StartedAt = now,
                 TotalViews = 0,
-
-                // Подтягиваем настройку пользователя
-                RecordEnabled = user.RecordEnabled
+                RecordEnabled = user.RecordEnabled,
+                LastPingAt = now
             };
-            // Добавляем стрим в контекст, чтобы EF присвоил Id
+
             _context.Streams.Add(stream);
-            await _context.SaveChangesAsync(); // теперь stream.Id реально присвоен
-
-            if (user.RecordEnabled)
-{
-                var recordDir = $"/var/www/streamplatform/media/users/{userId}/streams/{stream.Id}/";
-
-                try
-                {
-                    if (!Directory.Exists(recordDir))
-                        Directory.CreateDirectory(recordDir);
-
-                    // chmod 775
-                    var chmod = new System.Diagnostics.ProcessStartInfo
-                    {
-                        FileName = "chmod",
-                        Arguments = $"-R 775 \"{recordDir}\"",
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    };
-                    System.Diagnostics.Process.Start(chmod)?.WaitForExit();
-
-                    // chown на пользователя приложения
-                    var chown = new System.Diagnostics.ProcessStartInfo
-                    {
-                        FileName = "chown",
-                        Arguments = $"-R boxedstream:boxedstream \"{recordDir}\"",
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    };
-                    System.Diagnostics.Process.Start(chown)?.WaitForExit();
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Ошибка при создании папки для записи стрима {StreamId}", stream.Id);
-                    stream.RecordEnabled = false; // чтобы не пытаться записывать
-                }
-
-                stream.RecordPath = Path.Combine(recordDir, "record.mp4");
-                stream.RecordEnabled = true; // активируем запись
-            }
-
-
-
-            user.CurrentStream = stream;
-            user.IsOnline = true;
-
             await _context.SaveChangesAsync();
 
-            // Получаем подписчиков стримера
+            // Подготовка папок
+            var recordDir = Path.Combine(RecordsBase, streamKey);
+            Directory.CreateDirectory(recordDir);
+
+            var targetDir = Path.Combine(MediaBase, userId.ToString(), "streams", stream.Id.ToString());
+            Directory.CreateDirectory(targetDir);
+
+            stream.RecordPath = Path.Combine(targetDir, "record.mp4");
+            user.CurrentStream = stream;
+            user.IsOnline = true;
+            await _context.SaveChangesAsync();
+
+            // Уведомления подписчикам
             var subscribers = await _context.Subscriptions
                 .Where(s => s.TargetUserId == userId)
                 .Include(s => s.Subscriber)
                 .Select(s => s.Subscriber)
                 .ToListAsync();
 
-            // Формируем payload уведомления
-            var payload = new
-            {
-                StreamId = stream.Id,
-                StreamerId = user.Id,
-                StreamerName = user.Nickname,
-                StreamName = stream.StreamName
-            };
-
-            // Отправляем уведомления через NotificationSender
+            var payload = new { StreamId = stream.Id, StreamerId = user.Id, StreamerName = user.Nickname, StreamName = stream.StreamName };
             await _notificationSender.NotifyStreamerSubscribersAsync(subscribers, user.Id, payload, NotificationType.StreamStarted);
 
             return stream;
         }
 
+        public async Task UpdateHeartbeatAsync(int userId, string? streamKey = null)
+        {
+            var stream = await _context.Streams
+                .Where(s => s.UserId == userId && s.EndedAt == null)
+                .OrderByDescending(s => s.StartedAt)
+                .FirstOrDefaultAsync();
 
+            if (stream == null) return;
 
+            stream.LastPingAt = DateTime.UtcNow;
+            await _context.SaveChangesAsync();
+        }
 
         public async Task<bool> EndStreamAsync(int userId, string streamKey)
         {
-            var user = await _context.Users
-                .Include(u => u.CurrentStream)
-                .FirstOrDefaultAsync(u => u.Id == userId);
+            var user = await _context.Users.Include(u => u.CurrentStream).FirstOrDefaultAsync(u => u.Id == userId);
+            if (user == null || user.StreamKey != streamKey) return false;
 
-            if (user?.CurrentStream == null || user.StreamKey != streamKey)
-                return false;
+            var stream = await GetActiveStreamForUserAsync(userId);
+            if (stream == null)
+            {
+                user.IsOnline = false;
+                user.CurrentStream = null;
+                await _context.SaveChangesAsync();
+                return true;
+            }
 
-            user.CurrentStream.EndedAt = DateTime.UtcNow;
+            stream.EndedAt = DateTime.UtcNow;
             user.IsOnline = false;
-
-            // Сохраняем последние настройки
-            user.LastStreamName = user.CurrentStream.StreamName;
-            user.LastTags = user.CurrentStream.Tags;
-            user.LastPreviewUrl = user.CurrentStream.PreviewUrl;
-
-            // Обнуляем текущий стрим, чтобы пользователь был "не в эфире"
+            user.LastStreamName = stream.StreamName;
+            user.LastTags = stream.Tags;
+            user.LastPreviewUrl = stream.PreviewUrl;
             user.CurrentStream = null;
-
             await _context.SaveChangesAsync();
 
-            // 🔔 Уведомления о завершении стрима подписчикам
-            //await _notificationService.NotifyStreamEndedAsync(user.CurrentStream);
+            await ProcessRecordingAsync(streamKey, stream.RecordPath, stream.Id);
 
             return true;
         }
 
+        private async Task ProcessRecordingAsync(string streamKey, string targetFile, int streamId)
+        {
+            await Task.Run(() =>
+            {
+                try
+                {
+                    var srcDir = Path.Combine(RecordsBase, streamKey);
+                    if (!Directory.Exists(srcDir)) return;
+
+                    var flvs = Directory.GetFiles(srcDir, "*.flv").OrderBy(f => File.GetCreationTimeUtc(f)).ToArray();
+                    if (flvs.Length == 0) return;
+
+                    var targetDir = Path.GetDirectoryName(targetFile);
+                    Directory.CreateDirectory(targetDir);
+
+                    var concatFile = Path.Combine(targetDir, $"concat_{streamId}.txt");
+                    using (var sw = new StreamWriter(concatFile))
+                        foreach (var f in flvs) sw.WriteLine($"file '{f.Replace("'", "'\\''")}'");
+
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = "/usr/bin/ffmpeg",
+                        Arguments = $"-y -f concat -safe 0 -i \"{concatFile}\" -c copy \"{targetFile}\"",
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    };
+
+                    var p = Process.Start(psi);
+                    p.WaitForExit();
+
+                    if (p.ExitCode != 0)
+                    {
+                        var last = flvs.Last();
+                        var psi2 = new ProcessStartInfo
+                        {
+                            FileName = "/usr/bin/ffmpeg",
+                            Arguments = $"-y -i \"{last}\" -c copy \"{targetFile}\"",
+                            RedirectStandardOutput = true,
+                            RedirectStandardError = true,
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        };
+                        var p2 = Process.Start(psi2);
+                        p2.WaitForExit();
+                    }
+
+                    foreach (var f in flvs) File.Delete(f);
+                    if (Directory.GetFiles(srcDir).Length == 0) Directory.Delete(srcDir);
+
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Recording processing failed for stream {StreamId}", streamId);
+                }
+            });
+        }
 
         public async Task<bool> UpdateStreamAsync(int userId, StreamUpdateDto updateDto)
         {
-            var stream = (await _context.Users
-                .Include(u => u.CurrentStream)
-                .FirstOrDefaultAsync(u => u.Id == userId))
-                ?.CurrentStream;
-
+            var stream = (await _context.Users.Include(u => u.CurrentStream).FirstOrDefaultAsync(u => u.Id == userId))?.CurrentStream;
             if (stream == null) return false;
 
-            if (!string.IsNullOrEmpty(updateDto.StreamName))
-                stream.StreamName = updateDto.StreamName;
-
-            if (updateDto.Tags != null)
-                stream.Tags = updateDto.Tags;
-
-            if (!string.IsNullOrEmpty(updateDto.PreviewUrl))
-                stream.PreviewUrl = updateDto.PreviewUrl;
+            if (!string.IsNullOrEmpty(updateDto.StreamName)) stream.StreamName = updateDto.StreamName;
+            if (updateDto.Tags != null) stream.Tags = updateDto.Tags;
+            if (!string.IsNullOrEmpty(updateDto.PreviewUrl)) stream.PreviewUrl = updateDto.PreviewUrl;
 
             await _context.SaveChangesAsync();
             return true;
@@ -200,9 +234,7 @@ namespace StreamPlatformBackend.Services
 
         public async Task<StreamInfoDto?> GetStreamInfoAsync(int userId)
         {
-            var user = await _context.Users.Include(u => u.CurrentStream)
-                .FirstOrDefaultAsync(u => u.Id == userId);
-
+            var user = await _context.Users.Include(u => u.CurrentStream).FirstOrDefaultAsync(u => u.Id == userId);
             var stream = user?.CurrentStream;
             if (stream == null || stream.EndedAt != null) return null;
 
@@ -223,17 +255,13 @@ namespace StreamPlatformBackend.Services
 
         public async Task<bool> ValidateStreamKeyAsync(string streamKey)
         {
-            if (!TryParseUserIdFromStreamKey(streamKey, out int userId))
-                return false;
-
+            if (!TryParseUserIdFromStreamKey(streamKey, out int userId)) return false;
             return await _context.Users.AnyAsync(u => u.Id == userId && u.StreamKey == streamKey);
         }
 
         public async Task<bool> IsUserStreamingAsync(int userId)
         {
-            var user = await _context.Users.Include(u => u.CurrentStream)
-                .FirstOrDefaultAsync(u => u.Id == userId);
-
+            var user = await _context.Users.Include(u => u.CurrentStream).FirstOrDefaultAsync(u => u.Id == userId);
             return user?.IsOnline == true && user.CurrentStream?.EndedAt == null;
         }
 
@@ -241,7 +269,6 @@ namespace StreamPlatformBackend.Services
         {
             var stream = await _context.Streams.FindAsync(streamId);
             if (stream == null) return 0;
-
             stream.TotalViews++;
             await _context.SaveChangesAsync();
             return stream.TotalViews;
@@ -249,59 +276,32 @@ namespace StreamPlatformBackend.Services
 
         public async Task<StreamModel?> GetStreamByUserIdAsync(int userId)
         {
-            return await _context.Streams.Include(s => s.User)
-                .FirstOrDefaultAsync(s => s.UserId == userId && s.EndedAt == null);
+            return await _context.Streams.Include(s => s.User).FirstOrDefaultAsync(s => s.UserId == userId && s.EndedAt == null);
         }
 
         private bool TryParseUserIdFromStreamKey(string streamKey, out int userId)
         {
             userId = 0;
             if (string.IsNullOrEmpty(streamKey) || !streamKey.StartsWith("live_")) return false;
-            var parts = streamKey.Split('_');
+            var parts = streamKey.Split('_', 3);
             return parts.Length >= 2 && int.TryParse(parts[1], out userId);
         }
-
 
         public async Task UpdateStreamRecordPathAsync(int userId, string filePath)
         {
             try
             {
-                _logger.LogInformation(
-                    "Updating record path for user {UserId}: {Path}",
-                    userId, filePath
-                );
-
-                var stream = await _context.Streams
-                    .FirstOrDefaultAsync(s =>
-                        s.UserId == userId &&
-                        s.StartedAt != null &&
-                        s.EndedAt == null // IsLive
-                    );
-
-                if (stream == null)
-                {
-                    _logger.LogWarning("No live stream found for user {UserId}", userId);
-                    return;
-                }
-
+                var stream = await _context.Streams.FirstOrDefaultAsync(s => s.UserId == userId && s.StartedAt != null && s.EndedAt == null);
+                if (stream == null) return;
                 stream.RecordPath = filePath;
-                stream.EndedAt = DateTime.UtcNow; // запись завершена -> стрим завершён
-
+                stream.EndedAt = DateTime.UtcNow;
                 await _context.SaveChangesAsync();
-
-                _logger.LogInformation(
-                    "Record path saved successfully for live stream {StreamId}",
-                    stream.Id
-                );
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex,
-                    "Error while updating record path for user {UserId}. File: {Path}",
-                    userId, filePath);
+                _logger.LogError(ex, "Error while updating record path for user {UserId}", userId);
                 throw;
             }
         }
-
     }
 }

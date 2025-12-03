@@ -39,6 +39,8 @@ namespace StreamPlatformBackend.Models.Stream
 
         public bool RecordEnabled { get; set; } // по умолчанию записываем
         public string? RecordPath { get; set; }         // путь к mp4/mkv
+
+        public DateTime? LastPingAt { get; set; }
     }
 }
 
