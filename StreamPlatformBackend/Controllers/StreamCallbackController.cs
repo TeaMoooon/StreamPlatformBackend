@@ -22,21 +22,23 @@ public class StreamCallbackController : ControllerBase
     }
 
     [HttpPost("start")]
-    public async Task<IActionResult> OnStreamStart([FromQuery(Name = "stream_key")] string streamKey,
-                                                   [FromQuery(Name = "secret")] string secret)
+    public async Task<IActionResult> OnStreamStart([FromQuery] string secret)
     {
         try
         {
+            var form = await Request.ReadFormAsync();
+            string streamKey = form["name"];
+
             _logger.LogInformation("=== STREAM START CALLBACK === streamKey={Key}", streamKey);
 
             if (string.IsNullOrEmpty(streamKey))
                 return BadRequest("Stream key is required");
 
-            if (!TryParseUserIdFromStreamKey(streamKey, out int userId))
-                return Unauthorized("Invalid stream key format");
-
             if (secret != RTMP_SECRET)
                 return Unauthorized("Invalid secret");
+
+            if (!TryParseUserIdFromStreamKey(streamKey, out int userId))
+                return Unauthorized("Invalid stream key format");
 
             await _streamService.StartStreamAsync(userId, streamKey);
             return Ok();
@@ -49,11 +51,13 @@ public class StreamCallbackController : ControllerBase
     }
 
     [HttpPost("end")]
-    public async Task<IActionResult> OnStreamEnd([FromQuery(Name = "stream_key")] string streamKey,
-                                                 [FromQuery(Name = "secret")] string secret)
+    public async Task<IActionResult> OnStreamEnd([FromQuery] string secret)
     {
         try
         {
+            var form = await Request.ReadFormAsync();
+            string streamKey = form["name"];
+
             _logger.LogInformation("=== STREAM END CALLBACK === streamKey={Key}", streamKey);
             if (string.IsNullOrEmpty(streamKey)) return Ok();
 
