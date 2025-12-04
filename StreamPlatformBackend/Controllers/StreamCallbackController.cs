@@ -69,7 +69,7 @@ public class StreamCallbackController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Stream END error for key: {Key}", streamKey);
+            _logger.LogError(ex, "=== STREAM END ERROR ===");
             return Ok();
         }
     }
