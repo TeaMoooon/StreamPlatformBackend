@@ -50,7 +50,7 @@ public class StreamCallbackController : ControllerBase
 
     [HttpPost("end")]
     public async Task<IActionResult> OnStreamEnd([FromQuery(Name = "stream_key")] string streamKey,
-                                                 [FromHeader(Name = "X-RTMP-SECRET")] string secret = null)
+                                                 [FromQuery(Name = "secret")] string secret)
     {
         try
         {
