@@ -55,31 +55,51 @@ namespace StreamPlatformBackend.Services
         public async Task<StreamModel> StartStreamAsync(int userId, string streamKey)
         {
             var now = DateTime.UtcNow;
-            var user = await _context.Users.Include(u => u.CurrentStream).FirstOrDefaultAsync(u => u.Id == userId);
-            if (user == null) throw new ArgumentException($"User {userId} not found");
-            if (user.StreamKey != streamKey) throw new UnauthorizedAccessException("Stream key mismatch");
 
+            var user = await _context.Users
+                .Include(u => u.CurrentStream)
+                .FirstOrDefaultAsync(u => u.Id == userId);
+
+            if (user == null)
+                throw new ArgumentException($"User {userId} not found");
+
+            if (user.StreamKey != streamKey)
+                throw new UnauthorizedAccessException("Stream key mismatch");
+
+
+            // --- 1. Если есть активный стрим — обновляем пинг ---
             var active = await GetActiveStreamForUserAsync(userId);
             if (active != null)
             {
                 active.LastPingAt = now;
                 user.CurrentStream = active;
                 user.IsOnline = true;
+
                 await _context.SaveChangesAsync();
                 return active;
             }
 
-            var last = await _context.Streams.Where(s => s.UserId == userId).OrderByDescending(s => s.StartedAt).FirstOrDefaultAsync();
+
+            // --- 2. Возврат в окно реконнекта ---
+            var last = await _context.Streams
+                .Where(s => s.UserId == userId)
+                .OrderByDescending(s => s.StartedAt)
+                .FirstOrDefaultAsync();
+
             if (last != null && last.EndedAt != null && (now - last.EndedAt.Value) <= ReconnectWindow)
             {
                 last.EndedAt = null;
                 last.LastPingAt = now;
+
                 user.CurrentStream = last;
                 user.IsOnline = true;
+
                 await _context.SaveChangesAsync();
                 return last;
             }
 
+
+            // --- 3. Создаём новый стрим ---
             var stream = new StreamModel
             {
                 UserId = userId,
@@ -88,37 +108,62 @@ namespace StreamPlatformBackend.Services
                 PreviewUrl = user.LastPreviewUrl,
                 StartedAt = now,
                 TotalViews = 0,
-                RecordEnabled = user.RecordEnabled,
+                RecordEnabled = user.RecordEnabled,  // здесь важно
                 LastPingAt = now
             };
 
             _context.Streams.Add(stream);
             await _context.SaveChangesAsync();
 
-            // Подготовка папок
-            var recordDir = Path.Combine(RecordsBase, streamKey);
-            Directory.CreateDirectory(recordDir);
 
-            var targetDir = Path.Combine(MediaBase, userId.ToString(), "streams", stream.Id.ToString());
-            Directory.CreateDirectory(targetDir);
+            // --- 4. Подготовка директорий (только если запись включена) ---
+            if (user.RecordEnabled)
+            {
+                // nginx пишет во /var/www/streamplatform/records — backend туда НЕ лезет.
 
-            stream.RecordPath = Path.Combine(targetDir, "record.mp4");
+                // backend создаёт только свою структуру хранения
+                var targetDir = Path.Combine(MediaBase, userId.ToString(), "streams", stream.Id.ToString());
+                Directory.CreateDirectory(targetDir);
+
+                stream.RecordPath = Path.Combine(targetDir, "record.mp4");
+            }
+            else
+            {
+                stream.RecordPath = null;
+            }
+
+
+            // --- 5. Привязка стрима к пользователю ---
             user.CurrentStream = stream;
             user.IsOnline = true;
             await _context.SaveChangesAsync();
 
-            // Уведомления подписчикам
+
+            // --- 6. Отправка уведомлений подписчикам ---
             var subscribers = await _context.Subscriptions
                 .Where(s => s.TargetUserId == userId)
                 .Include(s => s.Subscriber)
                 .Select(s => s.Subscriber)
                 .ToListAsync();
 
-            var payload = new { StreamId = stream.Id, StreamerId = user.Id, StreamerName = user.Nickname, StreamName = stream.StreamName };
-            await _notificationSender.NotifyStreamerSubscribersAsync(subscribers, user.Id, payload, NotificationType.StreamStarted);
+            var payload = new
+            {
+                StreamId = stream.Id,
+                StreamerId = user.Id,
+                StreamerName = user.Nickname,
+                StreamName = stream.StreamName
+            };
+
+            await _notificationSender.NotifyStreamerSubscribersAsync(
+                subscribers,
+                user.Id,
+                payload,
+                NotificationType.StreamStarted
+            );
 
             return stream;
         }
+
 
         public async Task UpdateHeartbeatAsync(int userId, string? streamKey = null)
         {
@@ -135,10 +180,16 @@ namespace StreamPlatformBackend.Services
 
         public async Task<bool> EndStreamAsync(int userId, string streamKey)
         {
-            var user = await _context.Users.Include(u => u.CurrentStream).FirstOrDefaultAsync(u => u.Id == userId);
-            if (user == null || user.StreamKey != streamKey) return false;
+            var user = await _context.Users
+                .Include(u => u.CurrentStream)
+                .FirstOrDefaultAsync(u => u.Id == userId);
+
+            if (user == null || user.StreamKey != streamKey)
+                return false;
 
             var stream = await GetActiveStreamForUserAsync(userId);
+
+            // ⚡ Если активного стрима уже нет (например, окно реконнекта закрылось)
             if (stream == null)
             {
                 user.IsOnline = false;
@@ -147,18 +198,46 @@ namespace StreamPlatformBackend.Services
                 return true;
             }
 
+            // ⚡ Формальное завершение стрима
             stream.EndedAt = DateTime.UtcNow;
+
+            // Сохраняем последние параметры стримера
             user.IsOnline = false;
             user.LastStreamName = stream.StreamName;
             user.LastTags = stream.Tags;
             user.LastPreviewUrl = stream.PreviewUrl;
             user.CurrentStream = null;
+
             await _context.SaveChangesAsync();
 
-            await ProcessRecordingAsync(streamKey, stream.RecordPath, stream.Id);
+
+            // ===================================================
+            //  🎥 Обработка записи (только если запись включена)
+            // ===================================================
+            try
+            {
+                if (stream.RecordEnabled && !string.IsNullOrEmpty(stream.RecordPath))
+                {
+                    await ProcessRecordingAsync(streamKey, stream.RecordPath, stream.Id);
+                }
+                else
+                {
+                    // Логируем, но не считаем ошибкой
+                    _logger.LogInformation(
+                        "Recording is disabled or recordPath is null. Skipping recording processing for stream {Id}",
+                        stream.Id
+                    );
+                }
+            }
+            catch (Exception ex)
+            {
+                // Ошибка обработки записи не должна ломать завершение стрима
+                _logger.LogError(ex, "Failed to process recording for stream {Id}", stream.Id);
+            }
 
             return true;
         }
+
 
         private async Task ProcessRecordingAsync(string streamKey, string targetFile, int streamId)
         {
