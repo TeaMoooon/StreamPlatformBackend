@@ -1,4 +1,5 @@
 ﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using StreamPlatformBackend.Data;
 using StreamPlatformBackend.DTO.StreamDTO;
 using StreamPlatformBackend.Models;
@@ -31,17 +32,23 @@ namespace StreamPlatformBackend.Services
         private readonly ILogger<StreamService> _logger;
         private readonly INotificationRepository _notificationRepository;
         private readonly INotificationSender _notificationSender;
+        private readonly IServiceScopeFactory _scopeFactory;
 
         private readonly TimeSpan ReconnectWindow = TimeSpan.FromSeconds(30);
         private readonly string RecordsBase = "/var/www/streamplatform/records/";
         private readonly string MediaBase = "/var/www/streamplatform/media/users/";
 
-        public StreamService(AppDbContext context, INotificationRepository notificationRepository, INotificationSender notificationSender, ILogger<StreamService> logger)
+        public StreamService(AppDbContext context, 
+                            INotificationRepository notificationRepository, 
+                            INotificationSender notificationSender, 
+                            ILogger<StreamService> logger,
+                            IServiceScopeFactory scopeFactory)
         {
             _context = context;
             _notificationRepository = notificationRepository;
             _notificationSender = notificationSender;
             _logger = logger;
+            _scopeFactory = scopeFactory;
         }
 
         public async Task<StreamModel?> GetActiveStreamForUserAsync(int userId)
@@ -189,7 +196,7 @@ namespace StreamPlatformBackend.Services
 
             var stream = await GetActiveStreamForUserAsync(userId);
 
-            // ⚡ Если активного стрима уже нет (например, окно реконнекта закрылось)
+            // Если стрим уже завершён ранее — просто почистим флаги
             if (stream == null)
             {
                 user.IsOnline = false;
@@ -198,45 +205,76 @@ namespace StreamPlatformBackend.Services
                 return true;
             }
 
-            // ⚡ Формальное завершение стрима
-            stream.EndedAt = DateTime.UtcNow;
-
-            // Сохраняем последние параметры стримера
-            user.IsOnline = false;
-            user.LastStreamName = stream.StreamName;
-            user.LastTags = stream.Tags;
-            user.LastPreviewUrl = stream.PreviewUrl;
-            user.CurrentStream = null;
-
+            // ===============================
+            // 🚧 Фаза ожидания реконнекта
+            // ===============================
+            stream.WaitingReconnect = true;
+            stream.LastPingAt = DateTime.UtcNow;
             await _context.SaveChangesAsync();
 
-
-            // ===================================================
-            //  🎥 Обработка записи (только если запись включена)
-            // ===================================================
-            try
+            // Запускаем фоновую задержку реконнекта
+            _ = Task.Run(async () =>
             {
-                if (stream.RecordEnabled && !string.IsNullOrEmpty(stream.RecordPath))
-                {
-                    await ProcessRecordingAsync(streamKey, stream.RecordPath, stream.Id);
-                }
-                else
-                {
-                    // Логируем, но не считаем ошибкой
-                    _logger.LogInformation(
-                        "Recording is disabled or recordPath is null. Skipping recording processing for stream {Id}",
-                        stream.Id
-                    );
-                }
-            }
-            catch (Exception ex)
-            {
-                // Ошибка обработки записи не должна ломать завершение стрима
-                _logger.LogError(ex, "Failed to process recording for stream {Id}", stream.Id);
-            }
+                await Task.Delay(TimeSpan.FromSeconds(30)); // окно реконнекта
 
+                using var scope = _scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+                var s = await db.Streams
+                    .Include(x => x.User)
+                    .FirstOrDefaultAsync(x => x.Id == stream.Id);
+
+                if (s == null)
+                    return;
+
+                // Если стрим уже продолжился — выходим
+                if (!s.WaitingReconnect)
+                    return;
+
+                // Если был пинг < 25 секунд назад — считаем, что стрим активен
+                if (s.LastPingAt.HasValue &&
+                    (DateTime.UtcNow - s.LastPingAt.Value).TotalSeconds < 25)
+                {
+                    s.WaitingReconnect = false;
+                    await db.SaveChangesAsync();
+                    return;
+                }
+
+                // ===============================
+                // ❌ Реальное завершение стрима
+                // ===============================
+                var usr = s.User;
+
+                s.EndedAt = DateTime.UtcNow;
+                usr.IsOnline = false;
+                usr.LastStreamName = s.StreamName;
+                usr.LastTags = s.Tags;
+                usr.LastPreviewUrl = s.PreviewUrl;
+                usr.CurrentStream = null;
+
+                s.WaitingReconnect = false;
+                await db.SaveChangesAsync();
+
+                // Обработка записи
+                try
+                {
+                    if (s.RecordEnabled && !string.IsNullOrEmpty(s.RecordPath))
+                    {
+                        await ProcessRecordingAsync(streamKey, s.RecordPath, s.Id);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Логируем, но не ломаем завершение
+                    _logger.LogError(ex, "Failed to process recording for stream {Id}", s.Id);
+                }
+
+            });
+
+            // OBS считает END подтверждённым
             return true;
         }
+
 
 
         private async Task ProcessRecordingAsync(string streamKey, string targetFile, int streamId)

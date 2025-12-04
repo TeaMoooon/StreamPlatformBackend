@@ -41,6 +41,7 @@ namespace StreamPlatformBackend.Models.Stream
         public string? RecordPath { get; set; }         // путь к mp4/mkv
 
         public DateTime? LastPingAt { get; set; }
+        public bool WaitingReconnect { get; set; }
     }
 }
 
