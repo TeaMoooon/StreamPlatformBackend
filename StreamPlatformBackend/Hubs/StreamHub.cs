@@ -24,9 +24,9 @@ namespace StreamPlatformBackend.Hubs
         /// <summary>Маппинг ConnectionId → (StreamerId, ViewerKey)</summary>
         private static readonly Dictionary<string, (int StreamerId, string ViewerKey)> ConnectionMap = new();
 
-        private readonly RedisChatService _redisChatService;
+        private readonly IRedisChatService _redisChatService;
 
-        public StreamHub(IStreamService streamService, IUserService userService, RedisChatService redisChatService, ILogger<StreamHub> logger)
+        public StreamHub(IStreamService streamService, IUserService userService, IRedisChatService redisChatService, ILogger<StreamHub> logger)
         {
             _streamService = streamService;
             _userService = userService;
