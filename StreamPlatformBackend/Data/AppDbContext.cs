@@ -17,6 +17,7 @@ namespace StreamPlatformBackend.Data
         public DbSet<StreamCategory> StreamCategories { get; set; }
         public DbSet<NotificationModel> Notifications { get; set; }
         public DbSet<UserSocialLink> UserSocialLinks { get; set; }
+        public DbSet<StreamModerator> StreamModerators { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -68,6 +69,18 @@ namespace StreamPlatformBackend.Data
                 .WithMany() // нет обратной навигации
                 .HasForeignKey(u => u.CurrentStreamId)
                 .OnDelete(DeleteBehavior.SetNull);
+
+            modelBuilder.Entity<StreamModerator>()
+        .HasOne(sm => sm.Streamer)
+        .WithMany(u => u.Moderators)
+        .HasForeignKey(sm => sm.StreamerId)
+        .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<StreamModerator>()
+                .HasOne(sm => sm.Moderator)
+                .WithMany(u => u.ModeratedStreams)
+                .HasForeignKey(sm => sm.ModeratorId)
+                .OnDelete(DeleteBehavior.Cascade);
         }
 
     }

@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.SignalR;
+using StreamPlatformBackend.DTO.StreamDTO;
 using StreamPlatformBackend.Services;
 using System.Security.Claims;
 
@@ -23,11 +24,15 @@ namespace StreamPlatformBackend.Hubs
         /// <summary>Маппинг ConnectionId → (StreamerId, ViewerKey)</summary>
         private static readonly Dictionary<string, (int StreamerId, string ViewerKey)> ConnectionMap = new();
 
-        public StreamHub(IStreamService streamService, IUserService userService, ILogger<StreamHub> logger)
+        private readonly RedisChatService _redisChatService;
+
+        public StreamHub(IStreamService streamService, IUserService userService, RedisChatService redisChatService, ILogger<StreamHub> logger)
         {
             _streamService = streamService;
             _userService = userService;
             _logger = logger;
+            _redisChatService = redisChatService;
+
         }
 
         /// <summary>
@@ -85,6 +90,7 @@ namespace StreamPlatformBackend.Hubs
                         StreamerName = streamer.Nickname
                     });
                 }
+                await LoadChatHistory(streamerUsername);
 
                 _logger.LogInformation("Viewer {ViewerKey} joined stream {StreamerId}", viewerKey, streamer.Id);
             }
@@ -199,6 +205,62 @@ namespace StreamPlatformBackend.Hubs
         {
             var userIdClaim = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             return int.TryParse(userIdClaim, out int userId) ? userId : 0;
+        }
+
+
+
+        // Новый метод — отправка сообщения
+        public async Task SendChatMessage(string streamerUsername, string text)
+        {
+            var streamer = await _userService.GetUserByNameAsync(streamerUsername);
+            if (streamer == null)
+            {
+                await Clients.Caller.SendAsync("Error", "Streamer not found");
+                return;
+            }
+
+            var userId = GetCurrentUserId();
+            var username = Context.User?.Identity?.Name ?? "Guest";
+
+            // Определяем роль
+            string role = "User";
+            if (userId == streamer.Id) role = "Streamer";
+            else if (await _redisChatService.IsModeratorAsync(streamer.Id, userId)) role = "Moderator";
+            else if (Context.User.IsInRole("Admin") || Context.User.IsInRole("SuperAdmin"))
+                role = "Admin";
+
+            // Создаём DTO
+            var streamInfo = await _streamService.GetStreamInfoAsync(streamer.Id);
+            double offset = 0;
+            if (streamInfo != null && streamInfo.StartedAt != null)
+                offset = (DateTime.UtcNow - streamInfo.StartedAt.Value).TotalSeconds;
+
+            var message = new ChatMessageDto
+            {
+                UserId = userId,
+                Username = username,
+                Text = text,
+                Role = role,
+                Timestamp = DateTime.UtcNow,
+                OffsetSeconds = offset
+            };
+
+            // Сохраняем в Redis и публикуем
+            await _redisChatService.AddMessageAsync(streamer.Id, message);
+            await _redisChatService.PublishMessageAsync(streamer.Id, message);
+
+            // Отправляем всем в группе
+            await Clients.Group($"stream_{streamer.Id}").SendAsync("ReceiveChatMessage", message);
+        }
+
+        // Получение последних сообщений при заходе в стрим
+        public async Task LoadChatHistory(string streamerUsername)
+        {
+            var streamer = await _userService.GetUserByNameAsync(streamerUsername);
+            if (streamer == null) return;
+
+            var messages = await _redisChatService.GetLastMessagesAsync(streamer.Id);
+            await Clients.Caller.SendAsync("LoadChatHistory", messages);
         }
     }
 }

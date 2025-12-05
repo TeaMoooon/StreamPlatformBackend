@@ -3,12 +3,11 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
-using Npgsql;
+using StackExchange.Redis;
 using StreamPlatformBackend.Data;
 using StreamPlatformBackend.Hubs;
 using StreamPlatformBackend.Services;
 using StreamPlatformBackend.Services.NotificationService;
-using System.Reflection;
 using System.Text;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -74,6 +73,18 @@ builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IStreamService, StreamService>();
 
 
+builder.Services.AddScoped<IRedisChatService, RedisChatService>();
+
+
+
+builder.Services.AddStackExchangeRedisCache(options =>
+{
+    options.Configuration = builder.Configuration.GetConnectionString("Redis");
+});
+
+builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
+    ConnectionMultiplexer.Connect(builder.Configuration.GetConnectionString("Redis")));
+
 
 
 // Аутентификация JWT
@@ -134,7 +145,9 @@ builder.Services.AddCors(options =>
 
 
 // WebSocket / SignalR
-builder.Services.AddSignalR();
+builder.Services.AddSignalR()
+    .AddStackExchangeRedis(builder.Configuration.GetConnectionString("Redis"));
+
 
 
 builder.Logging.ClearProviders();

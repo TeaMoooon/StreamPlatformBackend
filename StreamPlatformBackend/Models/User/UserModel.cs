@@ -59,6 +59,15 @@ namespace StreamPlatformBackend.Models.User
         public bool RecordEnabled { get; set; } = true;
         public List<string> LastTags { get; set; } = new();
 
+        // Стример → список модераторов
+        [JsonIgnore]
+        public virtual ICollection<StreamModerator> Moderators { get; set; } = new HashSet<StreamModerator>();
+
+        // Модератор → список стримеров, где он назначен
+        [JsonIgnore]
+        public virtual ICollection<StreamModerator> ModeratedStreams { get; set; } = new HashSet<StreamModerator>();
+
+
 
         // ---------- Навигация ----------
         [JsonIgnore]
