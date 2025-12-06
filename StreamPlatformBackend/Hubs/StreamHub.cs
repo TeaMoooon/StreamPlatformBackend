@@ -90,7 +90,7 @@ namespace StreamPlatformBackend.Hubs
                         StreamerName = streamer.Nickname
                     });
                 }
-                await LoadChatHistory(streamerUsername);
+                await LoadChatHistory();
 
                 _logger.LogInformation("Viewer {ViewerKey} joined stream {StreamerId}", viewerKey, streamer.Id);
             }
@@ -210,31 +210,42 @@ namespace StreamPlatformBackend.Hubs
 
 
         // Новый метод — отправка сообщения
-        public async Task SendChatMessage(string streamerUsername, string text)
+        public async Task SendChatMessage(string text)
         {
-            var streamer = await _userService.GetUserByNameAsync(streamerUsername);
-            if (streamer == null)
+            // 1. Проверяем авторизацию
+            if (!Context.User.Identity.IsAuthenticated)
             {
-                await Clients.Caller.SendAsync("Error", "Streamer not found");
+                await Clients.Caller.SendAsync("Error", "Unauthorized");
                 return;
             }
 
+            // 2. Получаем userId и username только из токена
             var userId = GetCurrentUserId();
-            var username = Context.User?.Identity?.Name ?? "Guest";
+            var username = Context.User.Identity.Name;
 
-            // Определяем роль
+            // 3. Определяем, в какой стрим пишет человек
+            if (!ConnectionMap.TryGetValue(Context.ConnectionId, out var info))
+            {
+                await Clients.Caller.SendAsync("Error", "NotJoinedToStream");
+                return;
+            }
+
+            var streamerId = info.StreamerId;
+
+            // 4. Определяем роль
             string role = "User";
-            if (userId == streamer.Id) role = "Streamer";
-            else if (await _redisChatService.IsModeratorAsync(streamer.Id, userId)) role = "Moderator";
+            if (userId == streamerId) role = "Streamer";
+            else if (await _redisChatService.IsModeratorAsync(streamerId, userId)) role = "Moderator";
             else if (Context.User.IsInRole("Admin") || Context.User.IsInRole("SuperAdmin"))
                 role = "Admin";
 
-            // Создаём DTO
-            var streamInfo = await _streamService.GetStreamInfoAsync(streamer.Id);
+            // 5. Получаем offset
+            var streamInfo = await _streamService.GetStreamInfoAsync(streamerId);
             double offset = 0;
-            if (streamInfo != null && streamInfo.StartedAt != null)
+            if (streamInfo?.StartedAt != null)
                 offset = (DateTime.UtcNow - streamInfo.StartedAt.Value).TotalSeconds;
 
+            // 6. DTO сообщения
             var message = new ChatMessageDto
             {
                 UserId = userId,
@@ -245,21 +256,22 @@ namespace StreamPlatformBackend.Hubs
                 OffsetSeconds = offset
             };
 
-            // Сохраняем в Redis и публикуем
-            await _redisChatService.AddMessageAsync(streamer.Id, message);
-            await _redisChatService.PublishMessageAsync(streamer.Id, message);
+            // 7. Сохраняем и рассылаем
+            await _redisChatService.AddMessageAsync(streamerId, message);
+            await _redisChatService.PublishMessageAsync(streamerId, message);
 
-            // Отправляем всем в группе
-            await Clients.Group($"stream_{streamer.Id}").SendAsync("ReceiveChatMessage", message);
+            await Clients.Group($"stream_{streamerId}")
+                .SendAsync("ReceiveChatMessage", message);
         }
 
-        // Получение последних сообщений при заходе в стрим
-        public async Task LoadChatHistory(string streamerUsername)
-        {
-            var streamer = await _userService.GetUserByNameAsync(streamerUsername);
-            if (streamer == null) return;
 
-            var messages = await _redisChatService.GetLastMessagesAsync(streamer.Id);
+        // Получение последних сообщений при заходе в стрим
+        public async Task LoadChatHistory()
+        {
+            if (!ConnectionMap.TryGetValue(Context.ConnectionId, out var info))
+                return;
+
+            var messages = await _redisChatService.GetLastMessagesAsync(info.StreamerId);
             await Clients.Caller.SendAsync("LoadChatHistory", messages);
         }
     }
