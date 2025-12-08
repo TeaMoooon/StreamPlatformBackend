@@ -420,5 +420,28 @@ namespace StreamPlatformBackend.Services
                 throw;
             }
         }
+
+        public async Task<StreamInfoDto?> GetStreamInfoByIdAsync(int userId)
+        {
+            var user = await _context.Users.Include(u => u.CurrentStream).FirstOrDefaultAsync(u => u.Id == userId);
+            var stream = user?.CurrentStream;
+            if (stream == null || stream.EndedAt != null) return null;
+
+            return new StreamInfoDto
+            {
+                StreamId = stream.Id,
+                StreamName = stream.StreamName,
+                StreamerName = user.Nickname,
+                StreamerId = user.Id,
+                Tags = stream.Tags,
+                PreviewUrl = stream.PreviewUrl,
+                HlsUrl = $"/hls/{user.StreamKey}.m3u8",
+                TotalViews = stream.TotalViews,
+                StartedAt = stream.StartedAt,
+                IsLive = stream.EndedAt == null
+            };
+        }
+
+
     }
 }

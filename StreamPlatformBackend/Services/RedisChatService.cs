@@ -1,28 +1,23 @@
-﻿using Microsoft.EntityFrameworkCore.Storage;
-using StackExchange.Redis;
+﻿using StackExchange.Redis;
 using StreamPlatformBackend.DTO.StreamDTO;
 using System.Text.Json;
 
 namespace StreamPlatformBackend.Services
 {
-
     public interface IRedisChatService
     {
-        Task AddMessageAsync(int streamerId, ChatMessageDto message);
-
-        Task<List<ChatMessageDto>> GetLastMessagesAsync(int streamerId);
-
+        Task AddMessageAsync(int streamId, ChatMessageDto message);
+        Task<List<ChatMessageDto>> GetLastMessagesAsync(int streamId);
         Task SetModeratorsAsync(int streamerId, IEnumerable<int> userIds);
-
         Task<bool> IsModeratorAsync(int streamerId, int userId);
-
-        Task PublishMessageAsync(int streamerId, ChatMessageDto message);
+        Task PublishMessageAsync(int streamId, ChatMessageDto message);
     }
+
     public class RedisChatService : IRedisChatService
     {
-        private readonly StackExchange.Redis.IDatabase _db;
-        private readonly StackExchange.Redis.ISubscriber _subscriber;
-        private const int MaxMessages = 50; // последние 50 сообщений
+        private readonly IDatabase _db;
+        private readonly ISubscriber _subscriber;
+        private const int MaxMessages = 50;
 
         public RedisChatService(IConnectionMultiplexer redis)
         {
@@ -30,28 +25,23 @@ namespace StreamPlatformBackend.Services
             _subscriber = redis.GetSubscriber();
         }
 
-        private string GetChatKey(int streamerId) => $"chat:{streamerId}:messages";
+        private string GetChatKey(int streamId) => $"chat:{streamId}:messages";
         private string GetModeratorsKey(int streamerId) => $"stream:{streamerId}:moderators";
 
-        // Сохраняем сообщение в Redis List
-        public async Task AddMessageAsync(int streamerId, ChatMessageDto message)
+        public async Task AddMessageAsync(int streamId, ChatMessageDto message)
         {
             var json = JsonSerializer.Serialize(message);
-            var key = GetChatKey(streamerId);
+            var key = GetChatKey(streamId);
             await _db.ListRightPushAsync(key, json);
-            await _db.ListTrimAsync(key, -MaxMessages, -1); // держим только последние MaxMessages
+            await _db.ListTrimAsync(key, -MaxMessages, -1);
         }
 
-        // Получаем последние сообщения
-        public async Task<List<ChatMessageDto>> GetLastMessagesAsync(int streamerId)
+        public async Task<List<ChatMessageDto>> GetLastMessagesAsync(int streamId)
         {
-            var key = GetChatKey(streamerId);
-            var messages = await _db.ListRangeAsync(key, 0, -1);
-            return messages.Select(m => JsonSerializer.Deserialize<ChatMessageDto>(m)!)
-                           .ToList();
+            var messages = await _db.ListRangeAsync(GetChatKey(streamId), 0, -1);
+            return messages.Select(m => JsonSerializer.Deserialize<ChatMessageDto>(m)!).ToList();
         }
 
-        // Модераторы
         public async Task SetModeratorsAsync(int streamerId, IEnumerable<int> userIds)
         {
             var key = GetModeratorsKey(streamerId);
@@ -61,18 +51,12 @@ namespace StreamPlatformBackend.Services
         }
 
         public async Task<bool> IsModeratorAsync(int streamerId, int userId)
-        {
-            var key = GetModeratorsKey(streamerId);
-            return await _db.SetContainsAsync(key, userId);
-        }
+            => await _db.SetContainsAsync(GetModeratorsKey(streamerId), userId);
 
-        // Pub/Sub если нужно
-        public async Task PublishMessageAsync(int streamerId, ChatMessageDto message)
+        public async Task PublishMessageAsync(int streamId, ChatMessageDto message)
         {
-            var channel = $"chat_channel:{streamerId}";
             var json = JsonSerializer.Serialize(message);
-            await _subscriber.PublishAsync(channel, json);
+            await _subscriber.PublishAsync($"chat_channel:{streamId}", json);
         }
     }
 }
-
