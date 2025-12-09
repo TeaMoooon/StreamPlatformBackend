@@ -20,7 +20,7 @@ namespace StreamPlatformBackend.Models.Stream
         [Required]
         public string StreamName { get; set; } = string.Empty;
 
-        public List<string> Tags { get; set; } = new();
+        public virtual ICollection<StreamTagModel> Tags { get; set; } = new HashSet<StreamTagModel>();
 
         public string? PreviewUrl { get; set; }
 
@@ -35,7 +35,7 @@ namespace StreamPlatformBackend.Models.Stream
         public int? CategoryId { get; set; } // nullable, чтобы старые стримы без категории не ломались
 
         [ForeignKey(nameof(CategoryId))]
-        public virtual StreamCategory? Category { get; set; }
+        public virtual StreamCategoryModel? Category { get; set; }
 
         public bool RecordEnabled { get; set; } // по умолчанию записываем
         public string? RecordPath { get; set; }         // путь к mp4/mkv

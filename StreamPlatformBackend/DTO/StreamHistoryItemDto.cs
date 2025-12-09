@@ -28,5 +28,11 @@
         /// Пример: media/users/5/streams/12/record.mp4
         /// </summary>
         public string? RecordPath { get; set; }
+
+
+
+        public string StreamName { get; set; } = string.Empty;
+        public string? CategoryName { get; set; }
+        public List<string> Tags { get; set; } = new();
     }
 }

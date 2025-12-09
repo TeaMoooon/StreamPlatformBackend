@@ -1,4 +1,5 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿using Azure;
+using Microsoft.EntityFrameworkCore;
 using StreamPlatformBackend.Models;
 using StreamPlatformBackend.Models.Stream;
 using StreamPlatformBackend.Models.User;
@@ -14,10 +15,12 @@ namespace StreamPlatformBackend.Data
         public DbSet<UserModel> Users { get; set; }
         public DbSet<SubscriptionModel> Subscriptions { get; set; }
         public DbSet<StreamModel> Streams { get; set; }
-        public DbSet<StreamCategory> StreamCategories { get; set; }
+        public DbSet<StreamCategoryModel> StreamCategories { get; set; }
         public DbSet<NotificationModel> Notifications { get; set; }
         public DbSet<UserSocialLink> UserSocialLinks { get; set; }
         public DbSet<StreamModerator> StreamModerators { get; set; }
+        public DbSet<TagModel> Tags { get; set; }
+        public DbSet<StreamTagModel> StreamTags { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -71,16 +74,33 @@ namespace StreamPlatformBackend.Data
                 .OnDelete(DeleteBehavior.SetNull);
 
             modelBuilder.Entity<StreamModerator>()
-        .HasOne(sm => sm.Streamer)
-        .WithMany(u => u.Moderators)
-        .HasForeignKey(sm => sm.StreamerId)
-        .OnDelete(DeleteBehavior.Cascade);
+                .HasOne(sm => sm.Streamer)
+                .WithMany(u => u.Moderators)
+                .HasForeignKey(sm => sm.StreamerId)
+                .OnDelete(DeleteBehavior.Cascade);
 
             modelBuilder.Entity<StreamModerator>()
                 .HasOne(sm => sm.Moderator)
                 .WithMany(u => u.ModeratedStreams)
                 .HasForeignKey(sm => sm.ModeratorId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<StreamTagModel>()
+                .HasKey(st => new { st.StreamId, st.TagId });
+
+            modelBuilder.Entity<StreamTagModel>()
+                .HasOne(st => st.Stream)
+                .WithMany(s => s.Tags)
+                .HasForeignKey(st => st.StreamId);
+
+            modelBuilder.Entity<StreamTagModel>()
+                .HasOne(st => st.Tag)
+                .WithMany(t => t.Streams)
+                .HasForeignKey(st => st.TagId);
+
+            modelBuilder.Entity<TagModel>()
+                .HasIndex(t => t.Slug)
+                .IsUnique();
         }
 
     }

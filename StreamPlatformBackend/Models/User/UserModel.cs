@@ -57,6 +57,10 @@ namespace StreamPlatformBackend.Models.User
         public string? LastPreviewUrl { get; set; }
         public string? LastStreamName { get; set; }
         public bool RecordEnabled { get; set; } = true;
+        public int? LastCategoryId { get; set; } 
+
+        [ForeignKey(nameof(LastCategoryId))]
+        public virtual StreamCategoryModel? LastCategory { get; set; }
         public List<string> LastTags { get; set; } = new();
 
         // Стример → список модераторов

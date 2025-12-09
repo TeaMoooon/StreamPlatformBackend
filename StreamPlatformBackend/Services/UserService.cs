@@ -612,6 +612,9 @@ namespace StreamPlatformBackend.Services
             // Получаем все стримы пользователя, сортируя по дате начала (новые первыми)
             var streams = await _context.Streams
                 .Where(s => s.UserId == userId)
+                .Include(s => s.Category)        // подтягиваем категорию
+                .Include(s => s.Tags)            // подтягиваем связи StreamTag
+                .ThenInclude(st => st.Tag)   // подтягиваем сами теги
                 .OrderByDescending(s => s.StartedAt)
                 .ToListAsync();
 

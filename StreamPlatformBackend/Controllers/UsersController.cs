@@ -536,7 +536,11 @@ namespace StreamPlatformBackend.Controllers
                     StartedAt = s.StartedAt,
                     EndedAt = s.EndedAt,
                     HasRecord = !string.IsNullOrEmpty(s.RecordPath),
-                    RecordPath = s.RecordPath
+                    RecordPath = s.RecordPath,
+                    StreamName = s.StreamName,
+                    CategoryName = s.Category?.Name,
+                    Tags = s.Tags.Select(st => st.Tag.Name).ToList()
+
                 }).ToList();
 
                 return Ok(new

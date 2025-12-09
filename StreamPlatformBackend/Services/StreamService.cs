@@ -111,7 +111,7 @@ namespace StreamPlatformBackend.Services
             {
                 UserId = userId,
                 StreamName = user.LastStreamName ?? $"{user.Nickname}'s Stream",
-                Tags = user.LastTags ?? new List<string>(),
+                Tags = new List<StreamTagModel>(),
                 PreviewUrl = user.LastPreviewUrl,
                 StartedAt = now,
                 TotalViews = 0,
@@ -143,6 +143,9 @@ namespace StreamPlatformBackend.Services
             // --- 5. Привязка стрима к пользователю ---
             user.CurrentStream = stream;
             user.IsOnline = true;
+            await _context.SaveChangesAsync();
+
+            await UpdateStreamTagsAsync(stream, user.LastTags);
             await _context.SaveChangesAsync();
 
 
@@ -248,7 +251,7 @@ namespace StreamPlatformBackend.Services
                 s.EndedAt = DateTime.UtcNow;
                 usr.IsOnline = false;
                 usr.LastStreamName = s.StreamName;
-                usr.LastTags = s.Tags;
+                usr.LastTags = s.Tags.Select(st => st.Tag.Name).ToList();
                 usr.LastPreviewUrl = s.PreviewUrl;
                 usr.CurrentStream = null;
 
@@ -338,12 +341,20 @@ namespace StreamPlatformBackend.Services
 
         public async Task<bool> UpdateStreamAsync(int userId, StreamUpdateDto updateDto)
         {
-            var stream = (await _context.Users.Include(u => u.CurrentStream).FirstOrDefaultAsync(u => u.Id == userId))?.CurrentStream;
+            var stream = (await _context.Users.Include(u => u.CurrentStream).ThenInclude(s => s.Tags).FirstOrDefaultAsync(u => u.Id == userId))?.CurrentStream;
             if (stream == null) return false;
 
+            // ---- Обновление имени ----
             if (!string.IsNullOrEmpty(updateDto.StreamName)) stream.StreamName = updateDto.StreamName;
-            if (updateDto.Tags != null) stream.Tags = updateDto.Tags;
+
+            // ---- Обновление превью ---
             if (!string.IsNullOrEmpty(updateDto.PreviewUrl)) stream.PreviewUrl = updateDto.PreviewUrl;
+
+            // ---- Обновление тегов ----
+            if (updateDto.Tags != null)
+            {
+                await UpdateStreamTagsAsync(stream, updateDto.Tags);
+            }
 
             await _context.SaveChangesAsync();
             return true;
@@ -361,12 +372,13 @@ namespace StreamPlatformBackend.Services
                 StreamName = stream.StreamName,
                 StreamerName = user.Nickname,
                 StreamerId = user.Id,
-                Tags = stream.Tags,
+                Tags = stream.Tags.Select(st => st.Tag.Name).ToList(),
                 PreviewUrl = stream.PreviewUrl,
                 HlsUrl = $"/hls/{user.StreamKey}.m3u8",
                 TotalViews = stream.TotalViews,
                 StartedAt = stream.StartedAt,
-                IsLive = stream.EndedAt == null
+                IsLive = stream.EndedAt == null,
+                Title = stream.StreamName
             };
         }
 
@@ -433,7 +445,7 @@ namespace StreamPlatformBackend.Services
                 StreamName = stream.StreamName,
                 StreamerName = user.Nickname,
                 StreamerId = user.Id,
-                Tags = stream.Tags,
+                Tags = stream.Tags.Select(st => st.Tag.Name).ToList(),
                 PreviewUrl = stream.PreviewUrl,
                 HlsUrl = $"/hls/{user.StreamKey}.m3u8",
                 TotalViews = stream.TotalViews,
@@ -441,6 +453,61 @@ namespace StreamPlatformBackend.Services
                 IsLive = stream.EndedAt == null
             };
         }
+
+        private async Task UpdateStreamTagsAsync(StreamModel stream, List<string>? tagSlugs)
+        {
+            tagSlugs ??= new List<string>();
+
+            // привести к нижнему регистру и убрать пустые/дубли
+            tagSlugs = tagSlugs
+                .Select(s => s.Trim().ToLower())
+                .Where(s => !string.IsNullOrWhiteSpace(s))
+                .Distinct()
+                .ToList();
+
+            // существующие теги в БД
+            var existingTags = await _context.Tags
+                .Where(t => tagSlugs.Contains(t.Slug))
+                .ToListAsync();
+
+            // создать новые, если не существуют
+            var missingSlugs = tagSlugs.Except(existingTags.Select(t => t.Slug)).ToList();
+            foreach (var slug in missingSlugs)
+            {
+                var newTag = new TagModel
+                {
+                    Name = System.Globalization.CultureInfo.CurrentCulture.TextInfo.ToTitleCase(slug),
+                    Slug = slug
+                };
+
+                _context.Tags.Add(newTag);
+                existingTags.Add(newTag);
+            }
+
+            await _context.SaveChangesAsync();
+
+            // текущие связи
+            var currentTagIds = stream.Tags.Select(t => t.TagId).ToList();
+            var targetTagIds = existingTags.Select(t => t.Id).ToList();
+
+            // добавляем новые связи
+            var toAdd = targetTagIds.Except(currentTagIds);
+            foreach (var tagId in toAdd)
+            {
+                stream.Tags.Add(new StreamTagModel
+                {
+                    StreamId = stream.Id,
+                    TagId = tagId
+                });
+            }
+
+            // удаляем лишние
+            var toRemove = currentTagIds.Except(targetTagIds);
+            stream.Tags = new HashSet<StreamTagModel>(stream.Tags
+                .Where(st => !toRemove.Contains(st.TagId)));
+        }
+
+
 
 
     }
