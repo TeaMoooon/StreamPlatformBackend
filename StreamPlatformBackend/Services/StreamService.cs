@@ -16,7 +16,6 @@ namespace StreamPlatformBackend.Services
     {
         Task<StreamModel> StartStreamAsync(int userId, string streamKey);
         Task<bool> EndStreamAsync(int userId, string streamKey);
-        Task<bool> UpdateStreamAsync(int userId, StreamUpdateDto updateDto);
         Task<StreamInfoDto?> GetStreamInfoAsync(int userId);
         Task<bool> ValidateStreamKeyAsync(string streamKey);
         Task<bool> IsUserStreamingAsync(int userId);
@@ -339,26 +338,7 @@ namespace StreamPlatformBackend.Services
             });
         }
 
-        public async Task<bool> UpdateStreamAsync(int userId, StreamUpdateDto updateDto)
-        {
-            var stream = (await _context.Users.Include(u => u.CurrentStream).ThenInclude(s => s.Tags).FirstOrDefaultAsync(u => u.Id == userId))?.CurrentStream;
-            if (stream == null) return false;
-
-            // ---- Обновление имени ----
-            if (!string.IsNullOrEmpty(updateDto.StreamName)) stream.StreamName = updateDto.StreamName;
-
-            // ---- Обновление превью ---
-            if (!string.IsNullOrEmpty(updateDto.PreviewUrl)) stream.PreviewUrl = updateDto.PreviewUrl;
-
-            // ---- Обновление тегов ----
-            if (updateDto.Tags != null)
-            {
-                await UpdateStreamTagsAsync(stream, updateDto.Tags);
-            }
-
-            await _context.SaveChangesAsync();
-            return true;
-        }
+        
 
         public async Task<StreamInfoDto?> GetStreamInfoAsync(int userId)
         {

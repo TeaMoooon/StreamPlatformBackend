@@ -19,10 +19,7 @@ namespace StreamPlatformBackend.Services
         Task<UserModel> CreateUserAsync(UserCreateDto userCreateDto);
 
         Task<bool> ValidateUserCredentialsAsync(string email, string password);
-        Task UpdateUserProfileAsync(int userId, UserUpdateDataDto dto);
-        Task<string> UploadUserImageAsync(int userId, IFormFile file, string type);
 
-        Task<string> RegenerateStreamKeyAsync(int userId);
         Task<(List<OnlineUserListDto> Streams, int TotalCount)> GetOnlineStreamersAsync(int page, int pageSize);
         Task<int> GetOnlineUsersCountAsync();
         Task<IEnumerable<OnlineUserListDto>> GetUserSubscriptionsAsync(int userId);
@@ -166,220 +163,24 @@ namespace StreamPlatformBackend.Services
             }
         }
 
-        public async Task UpdateUserProfileAsync(int userId, UserUpdateDataDto dto)
-        {
-            try
-            {
-                var user = await _context.Users.Include(u => u.SocialLinks)
-                                               .FirstOrDefaultAsync(u => u.Id == userId);
-                if (user == null) throw new ArgumentException("Пользователь не найден");
-
-                bool hasChanges = false;
-
-                // 🔹 Email
-                if (!string.IsNullOrEmpty(dto.Email) && user.Email != dto.Email.ToLower())
-                {
-                    if (!IsValidEmail(dto.Email))
-                        throw new ArgumentException("Неверный формат email");
-                    if (await EmailExistsAsync(dto.Email))
-                        throw new ArgumentException("Email уже используется");
-
-                    user.Email = dto.Email.ToLower();
-                    hasChanges = true;
-                }
-
-                // 🔹 Nickname
-                if (!string.IsNullOrEmpty(dto.Nickname) && user.Nickname != dto.Nickname.ToLower())
-                {
-                    if (dto.Nickname.Length is < 3 or > 50)
-                        throw new ArgumentException("Никнейм должен быть от 3 до 50 символов");
-                    if (await NicknameExistsAsync(dto.Nickname))
-                        throw new ArgumentException("Никнейм уже используется");
-
-                    user.Nickname = dto.Nickname.ToLower();
-                    hasChanges = true;
-                }
-
-                // 🔹 ProfileDescription
-                if (dto.ProfileDescription != null && user.ProfileDescription != dto.ProfileDescription)
-                {
-                    if (dto.ProfileDescription.Length > 500)
-                        throw new ArgumentException("Описание не должно превышать 500 символов");
-
-                    user.ProfileDescription = dto.ProfileDescription;
-                    hasChanges = true;
-                }
-
-                // 🔹 SocialLinks
-                if (dto.SocialLinks != null)
-                {
-                    var toRemove = user.SocialLinks
-                                       .Where(s => !dto.SocialLinks.Any(n => n.Platform == s.Platform))
-                                       .ToList();
-                    _context.UserSocialLinks.RemoveRange(toRemove);
-
-                    foreach (var newLink in dto.SocialLinks)
-                    {
-                        var existing = user.SocialLinks.FirstOrDefault(s => s.Platform == newLink.Platform);
-                        if (existing != null)
-                            existing.Url = newLink.Url;
-                        else
-                            user.SocialLinks.Add(new UserSocialLink
-                            {
-                                UserId = userId,
-                                Platform = newLink.Platform,
-                                Url = newLink.Url
-                            });
-                    }
-                    hasChanges = true;
-                }
-
-                // 🔹 Change Password
-                if (!string.IsNullOrEmpty(dto.NewPassword))
-                {
-                    if (string.IsNullOrEmpty(dto.CurrentPassword))
-                        throw new ArgumentException("Текущий пароль обязателен для смены пароля");
-
-                    if (!_passwordHasher.VerifyPassword(dto.CurrentPassword, user.PasswordHash))
-                        throw new ArgumentException("Текущий пароль неверен");
-
-                    if (dto.NewPassword.Length < 6)
-                        throw new ArgumentException("Новый пароль должен быть не менее 6 символов");
-
-                    user.PasswordHash = _passwordHasher.HashPassword(dto.NewPassword);
-                    hasChanges = true;
-                }
-
-                // 🔹 RecordEnabled
-                if (user.RecordEnabled != dto.RecordEnabled)
-                {
-                    user.RecordEnabled = dto.RecordEnabled;
-                    hasChanges = true;
-                }
-
-                if (hasChanges)
-                    await _context.SaveChangesAsync();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Ошибка при обновлении профиля пользователя {UserId}", userId);
-                throw;
-            }
-        }
+        
 
 
 
-        /// <summary>
-        /// Загружает изображение на сервер и обновляет профиль пользователя.
-        /// </summary>
-        /// <remarks>
-        /// Создаёт папку для пользователя, сохраняет файл с именем
-        /// <b>profile.jpg</b> или <b>background.jpg</b>
-        /// 
-        /// Разрешённые форматы: JPG, JPEG, PNG, WEBP.
-        /// </remarks>
-        /// <param name="userId">ID пользователя</param>
-        /// <param name="file">Файл изображения</param>
-        /// <param name="type">Тип изображения ("profile" или "background")</param>
-        /// <returns>URL сохранённого файла</returns>
-        public async Task<string> UploadUserImageAsync(int userId, IFormFile file, string type)
-        {
-            var user = await _context.Users.FindAsync(userId);
-            if (user == null)
-                throw new ArgumentException("Пользователь не найден");
-
-            // Разрешённые расширения
-            var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".webp" };
-            var extension = Path.GetExtension(file.FileName).ToLower();
-
-            if (!allowedExtensions.Contains(extension))
-                throw new ArgumentException("Разрешены только форматы: JPG, PNG, WEBP");
-
-            // Папка для хранения медиа конкретного пользователя
-            // Берём путь из конфигурации, fallback если не задан
-            string baseMediaPath = _mediaPath ?? "/var/www/streamplatform/media";
-            var folderPath = Path.Combine(baseMediaPath, "users", userId.ToString());
-            Directory.CreateDirectory(folderPath);
-
-            // Имя файла
-            string fileName = type switch
-            {
-                "profile" => $"profile{extension}",
-                "background" => $"background{extension}",
-                _ => throw new ArgumentException("Неверный тип изображения")
-            };
-
-            var fullPath = Path.Combine(folderPath, fileName);
-
-            // Сохраняем файл
-            using (var stream = new FileStream(fullPath, FileMode.Create))
-                await file.CopyToAsync(stream);
-
-            // URL для фронтенда (через Nginx /media/)
-            string url = $"/media/users/{userId}/{fileName}";
-
-            // Обновляем поля пользователя
-            if (type == "profile") user.ProfileImage = url;
-            if (type == "background") user.BackgroundImage = url;
-
-            await _context.SaveChangesAsync();
-
-            return url;
-        }
+        
 
 
 
 
         // Вспомогательная проверка email
-        private bool IsValidEmail(string email)
-        {
-            try
-            {
-                var addr = new System.Net.Mail.MailAddress(email);
-                return addr.Address == email;
-            }
-            catch
-            {
-                return false;
-            }
-        }
+        
 
 
 
 
 
 
-        public async Task<string> RegenerateStreamKeyAsync(int userId)
-        {
-            using var transaction = await _context.Database.BeginTransactionAsync();
-            try
-            {
-                var user = await _context.Users.FindAsync(userId) ?? throw new ArgumentException("Пользователь не найден");
-                string newStreamKey;
-                int attempts = 0;
-                const int maxAttempts = 5;
-
-                do
-                {
-                    newStreamKey = GenerateStreamKey(userId);
-                    attempts++;
-                    if (attempts > maxAttempts) throw new ApplicationException("Не удалось сгенерировать уникальный ключ трансляции");
-                }
-                while (await StreamKeyExistsAsync(newStreamKey));
-
-                user.StreamKey = newStreamKey;
-                await _context.SaveChangesAsync();
-                await transaction.CommitAsync();
-
-                return newStreamKey;
-            }
-            catch (Exception ex)
-            {
-                await transaction.RollbackAsync();
-                _logger.LogError(ex, "Ошибка при пересоздании StreamKey для пользователя {UserId}", userId);
-                throw;
-            }
-        }
+        
 
         public async Task<(List<OnlineUserListDto> Streams, int TotalCount)> GetOnlineStreamersAsync(int page = 1, int pageSize = 25)
         {

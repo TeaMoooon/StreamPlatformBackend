@@ -23,8 +23,12 @@ namespace StreamPlatformBackend.DTO.UserDTO
         public string? CurrentPassword { get; set; }
         public string? NewPassword { get; set; }
 
-        public List<SocialLinkDto>? SocialLinks { get; set; }  // 🔹 новые соцсети
+        public List<SocialLinkDto>? SocialLinks { get; set; }  // соцсети
 
         public bool RecordEnabled { get; set; }
+
+        public IFormFile? ProfileImage { get; set; }
+        public IFormFile? BackgroundImage { get; set; }
+
     }
 }

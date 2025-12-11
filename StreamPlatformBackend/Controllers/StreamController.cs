@@ -23,16 +23,7 @@ public class StreamController : ControllerBase
         _context = context;
     }
 
-    /// <summary>Обновляет текущий стрим пользователя</summary>
-    [Authorize]
-    [HttpPut]
-    public async Task<IActionResult> UpdateStream([FromBody] StreamUpdateDto updateDto)
-    {
-        var userId = GetCurrentUserId();
-        var success = await _streamService.UpdateStreamAsync(userId, updateDto);
-        if (!success) return BadRequest("No active stream found or update failed");
-        return Ok(new { message = "Stream updated successfully" });
-    }
+    
 
     /// <summary>Возвращает статус текущего стрима пользователя</summary>
     [HttpGet("status")]
