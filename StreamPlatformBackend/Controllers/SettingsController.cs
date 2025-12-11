@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using StreamPlatformBackend.DTO.StreamDTO;
 using StreamPlatformBackend.DTO.UserDTO;
 using StreamPlatformBackend.Services;
+using System.Security.Claims;
 
 namespace StreamPlatformBackend.Controllers
 {
@@ -40,7 +41,7 @@ namespace StreamPlatformBackend.Controllers
         [Consumes("multipart/form-data")]
         public async Task<IActionResult> UpdateUserProfile([FromForm] UserUpdateDataDto dto)
         {
-            int userId = int.Parse(User.FindFirst("id")?.Value ?? throw new UnauthorizedAccessException());
+            int userId = int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? throw new UnauthorizedAccessException());
 
             try
             {
@@ -76,7 +77,8 @@ namespace StreamPlatformBackend.Controllers
         [HttpPut("streamkey")]
         public async Task<IActionResult> RegenerateStreamKey()
         {
-            int userId = int.Parse(User.FindFirst("id")?.Value ?? throw new UnauthorizedAccessException());
+            int userId = int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? throw new UnauthorizedAccessException());
+
 
             try
             {
@@ -118,7 +120,8 @@ namespace StreamPlatformBackend.Controllers
         [Consumes("multipart/form-data")]
         public async Task<IActionResult> UpdateStreamSettings([FromForm] StreamUpdateDto dto)
         {
-            int userId = int.Parse(User.FindFirst("id")?.Value ?? throw new UnauthorizedAccessException());
+            int userId = int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? throw new UnauthorizedAccessException());
+
 
             try
             {
