@@ -6,7 +6,7 @@
     public class StreamModifyDto
     {
         public string? StreamName { get; set; }
-        public List<string>? Tags { get; set; }
+        public string[]? Tags { get; set; }
         public IFormFile? PreviewImage { get; set; }
         public int? CategoryId { get; set; }
     }

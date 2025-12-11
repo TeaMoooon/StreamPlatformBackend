@@ -348,7 +348,7 @@ namespace StreamPlatformBackend.Services
                 await UpdateStreamCategoryAsync(stream, dto.CategoryId.Value);
 
             if (dto.Tags != null)
-                await UpdateStreamTagsAsync(stream, dto.Tags);
+                await UpdateStreamTagsAsync(stream, dto.Tags.ToList());
 
             await _context.SaveChangesAsync();
             return true;
