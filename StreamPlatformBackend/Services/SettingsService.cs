@@ -1,5 +1,6 @@
 ﻿using Microsoft.EntityFrameworkCore;
 using StreamPlatformBackend.Data;
+using StreamPlatformBackend.DTO;
 using StreamPlatformBackend.DTO.StreamDTO;
 using StreamPlatformBackend.DTO.UserDTO;
 using StreamPlatformBackend.Models.Stream;
@@ -17,6 +18,8 @@ namespace StreamPlatformBackend.Services
         
         // Stream settings
         Task<bool> UpdateStreamSettingsAsync(int userId, StreamUpdateDto dto);
+        Task<(List<StreamCategoryForSettingsDto> categories, int totalCount)> GetCategoriesAsync(string? search, int page, int pageSize);
+
 
 
     }
@@ -354,7 +357,35 @@ namespace StreamPlatformBackend.Services
             return true;
         }
 
-        
+        public async Task<(List<StreamCategoryForSettingsDto> categories, int totalCount)> GetCategoriesAsync(
+    string? search, int page, int pageSize)
+        {
+            var query = _context.StreamCategories.AsQueryable();
+
+            // Поиск только по имени
+            if (!string.IsNullOrWhiteSpace(search))
+                query = query.Where(c => c.Name!.ToLower().Contains(search.ToLower()));
+
+            int total = await query.CountAsync();
+
+            var items = await query
+                .OrderBy(c => c.Name)
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .Select(c => new StreamCategoryForSettingsDto
+                {
+                    Id = c.Id,
+                    Name = c.Name!,
+                    BannerImageUrl = c.BannerImageUrl
+                })
+                .ToListAsync();
+
+            return (items, total);
+        }
+
+
+
+
 
 
 

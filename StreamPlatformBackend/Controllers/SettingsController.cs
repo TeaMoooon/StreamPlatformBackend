@@ -153,5 +153,48 @@ namespace StreamPlatformBackend.Controllers
                 return StatusCode(500, new { error = "Внутренняя ошибка сервера" });
             }
         }
+
+        /// <summary>
+        /// Получение списка категорий для выбора в настройках стрима.
+        /// </summary>
+        /// <remarks>
+        /// Поддерживает поиск по имени категории.
+        /// Возвращает данные с пагинацией в том же формате, что и список стримов.
+        /// </remarks>
+        /// <param name="search">Поиск по названию категории</param>
+        /// <param name="page">Номер страницы (по умолчанию 1)</param>
+        /// <param name="pageSize">Размер страницы (по умолчанию 20)</param>
+        /// <response code="200">Возвращает список категорий</response>
+        /// <response code="401">Неавторизованный доступ</response>
+        /// <response code="500">Внутренняя ошибка сервера</response>
+        [HttpGet("categories")]
+        public async Task<IActionResult> GetCategories(
+            [FromQuery] string? search = null,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = 20)
+        {
+            try
+            {
+                if (page < 1) page = 1;
+                if (pageSize < 1) pageSize = 20;
+
+                var (categories, total) = await _settingsService.GetCategoriesAsync(search, page, pageSize);
+
+                return Ok(new
+                {
+                    Page = page,
+                    PageSize = pageSize,
+                    TotalCategories = total,
+                    Categories = categories
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Ошибка при получении списка категорий");
+                return StatusCode(500, new { error = "Внутренняя ошибка сервера" });
+            }
+        }
+
+
     }
 }
