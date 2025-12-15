@@ -283,28 +283,32 @@ namespace StreamPlatformBackend.Services
         {
             return Task.Run(() =>
             {
-                var srcDir = Path.Combine(RecordsBase, streamKey);
-
                 try
                 {
+                    var srcDir = RecordsBase;
+
                     _logger.LogInformation(
-                        "Recording processing started. StreamId={StreamId}, Dir={Dir}",
-                        streamId, srcDir
+                        "Recording processing started. StreamId={StreamId}, StreamKey={StreamKey}",
+                        streamId, streamKey
                     );
 
                     if (!Directory.Exists(srcDir))
                     {
-                        _logger.LogWarning("Recording dir not found: {Dir}", srcDir);
+                        _logger.LogError("Records base directory not found: {Dir}", srcDir);
                         return;
                     }
 
-                    var flvs = Directory.GetFiles(srcDir, "*.flv")
+                    var flvs = Directory
+                        .GetFiles(srcDir, $"{streamKey}*.flv")
                         .OrderBy(f => File.GetCreationTimeUtc(f))
                         .ToArray();
 
                     if (flvs.Length == 0)
                     {
-                        _logger.LogWarning("No flv files found in {Dir}", srcDir);
+                        _logger.LogWarning(
+                            "No flv files found for stream {StreamKey} in {Dir}",
+                            streamKey, srcDir
+                        );
                         return;
                     }
 
@@ -314,7 +318,7 @@ namespace StreamPlatformBackend.Services
                     );
 
                     // ===============================
-                    // ⏳ Ждём стабилизации файлов
+                    // ⏳ Ждём завершения записи nginx
                     // ===============================
                     foreach (var f in flvs)
                     {
@@ -335,13 +339,11 @@ namespace StreamPlatformBackend.Services
                     using (var sw = new StreamWriter(concatFile))
                     {
                         foreach (var f in flvs)
-                        {
                             sw.WriteLine($"file '{f.Replace("'", "'\\''")}'");
-                        }
                     }
 
                     // ===============================
-                    // 🎬 ffmpeg (concat)
+                    // 🎬 Склейка через ffmpeg
                     // ===============================
                     if (!RunFfmpeg(
                         $"-y -f concat -safe 0 -i \"{concatFile}\" -c copy \"{targetFile}\"",
@@ -352,15 +354,15 @@ namespace StreamPlatformBackend.Services
                             streamId, concatError
                         );
 
-                        // fallback — берём последний flv
+                        // fallback — последний flv
                         var last = flvs.Last();
                         if (!RunFfmpeg(
                             $"-y -i \"{last}\" -c copy \"{targetFile}\"",
-                            out var singleError))
+                            out var fallbackError))
                         {
                             _logger.LogError(
                                 "ffmpeg fallback failed for stream {StreamId}: {Error}",
-                                streamId, singleError
+                                streamId, fallbackError
                             );
                             return;
                         }
@@ -372,19 +374,12 @@ namespace StreamPlatformBackend.Services
                     );
 
                     // ===============================
-                    // 🧹 Очистка временных файлов
+                    // 🧹 Очистка временных flv
                     // ===============================
                     foreach (var f in flvs)
-                    {
                         TryDeleteFile(f);
-                    }
 
                     TryDeleteFile(concatFile);
-
-                    if (!Directory.EnumerateFileSystemEntries(srcDir).Any())
-                    {
-                        Directory.Delete(srcDir);
-                    }
                 }
                 catch (Exception ex)
                 {
@@ -396,6 +391,7 @@ namespace StreamPlatformBackend.Services
                 }
             });
         }
+
 
         private bool WaitForFileStabilization(string path, int attempts = 10, int delayMs = 1000)
         {
