@@ -279,66 +279,198 @@ namespace StreamPlatformBackend.Services
 
 
 
-        private async Task ProcessRecordingAsync(string streamKey, string targetFile, int streamId)
+        private Task ProcessRecordingAsync(string streamKey, string targetFile, int streamId)
         {
-            await Task.Run(() =>
+            return Task.Run(() =>
             {
+                var srcDir = Path.Combine(RecordsBase, streamKey);
+
                 try
                 {
-                    var srcDir = Path.Combine(RecordsBase, streamKey);
-                    if (!Directory.Exists(srcDir)) return;
+                    _logger.LogInformation(
+                        "Recording processing started. StreamId={StreamId}, Dir={Dir}",
+                        streamId, srcDir
+                    );
 
-                    var flvs = Directory.GetFiles(srcDir, "*.flv").OrderBy(f => File.GetCreationTimeUtc(f)).ToArray();
-                    if (flvs.Length == 0) return;
+                    if (!Directory.Exists(srcDir))
+                    {
+                        _logger.LogWarning("Recording dir not found: {Dir}", srcDir);
+                        return;
+                    }
 
-                    var targetDir = Path.GetDirectoryName(targetFile);
+                    var flvs = Directory.GetFiles(srcDir, "*.flv")
+                        .OrderBy(f => File.GetCreationTimeUtc(f))
+                        .ToArray();
+
+                    if (flvs.Length == 0)
+                    {
+                        _logger.LogWarning("No flv files found in {Dir}", srcDir);
+                        return;
+                    }
+
+                    _logger.LogInformation(
+                        "Found {Count} flv files for stream {StreamId}",
+                        flvs.Length, streamId
+                    );
+
+                    // ===============================
+                    // ⏳ Ждём стабилизации файлов
+                    // ===============================
+                    foreach (var f in flvs)
+                    {
+                        if (!WaitForFileStabilization(f))
+                        {
+                            _logger.LogWarning("File not stabilized: {File}", f);
+                            return;
+                        }
+                    }
+
+                    // ===============================
+                    // 📁 Подготовка папки назначения
+                    // ===============================
+                    var targetDir = Path.GetDirectoryName(targetFile)!;
                     Directory.CreateDirectory(targetDir);
 
                     var concatFile = Path.Combine(targetDir, $"concat_{streamId}.txt");
                     using (var sw = new StreamWriter(concatFile))
-                        foreach (var f in flvs) sw.WriteLine($"file '{f.Replace("'", "'\\''")}'");
-
-                    var psi = new ProcessStartInfo
                     {
-                        FileName = "/usr/bin/ffmpeg",
-                        Arguments = $"-y -f concat -safe 0 -i \"{concatFile}\" -c copy \"{targetFile}\"",
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    };
-
-                    var p = Process.Start(psi);
-                    p.WaitForExit();
-
-                    if (p.ExitCode != 0)
-                    {
-                        var last = flvs.Last();
-                        var psi2 = new ProcessStartInfo
+                        foreach (var f in flvs)
                         {
-                            FileName = "/usr/bin/ffmpeg",
-                            Arguments = $"-y -i \"{last}\" -c copy \"{targetFile}\"",
-                            RedirectStandardOutput = true,
-                            RedirectStandardError = true,
-                            UseShellExecute = false,
-                            CreateNoWindow = true
-                        };
-                        var p2 = Process.Start(psi2);
-                        p2.WaitForExit();
+                            sw.WriteLine($"file '{f.Replace("'", "'\\''")}'");
+                        }
                     }
 
-                    foreach (var f in flvs) File.Delete(f);
-                    if (Directory.GetFiles(srcDir).Length == 0) Directory.Delete(srcDir);
+                    // ===============================
+                    // 🎬 ffmpeg (concat)
+                    // ===============================
+                    if (!RunFfmpeg(
+                        $"-y -f concat -safe 0 -i \"{concatFile}\" -c copy \"{targetFile}\"",
+                        out var concatError))
+                    {
+                        _logger.LogError(
+                            "ffmpeg concat failed for stream {StreamId}: {Error}",
+                            streamId, concatError
+                        );
 
+                        // fallback — берём последний flv
+                        var last = flvs.Last();
+                        if (!RunFfmpeg(
+                            $"-y -i \"{last}\" -c copy \"{targetFile}\"",
+                            out var singleError))
+                        {
+                            _logger.LogError(
+                                "ffmpeg fallback failed for stream {StreamId}: {Error}",
+                                streamId, singleError
+                            );
+                            return;
+                        }
+                    }
+
+                    _logger.LogInformation(
+                        "Recording successfully saved: {File}",
+                        targetFile
+                    );
+
+                    // ===============================
+                    // 🧹 Очистка временных файлов
+                    // ===============================
+                    foreach (var f in flvs)
+                    {
+                        TryDeleteFile(f);
+                    }
+
+                    TryDeleteFile(concatFile);
+
+                    if (!Directory.EnumerateFileSystemEntries(srcDir).Any())
+                    {
+                        Directory.Delete(srcDir);
+                    }
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogError(ex, "Recording processing failed for stream {StreamId}", streamId);
+                    _logger.LogError(
+                        ex,
+                        "Recording processing failed for stream {StreamId}",
+                        streamId
+                    );
                 }
             });
         }
 
-        
+        private bool WaitForFileStabilization(string path, int attempts = 10, int delayMs = 1000)
+        {
+            try
+            {
+                long lastSize = -1;
+
+                for (int i = 0; i < attempts; i++)
+                {
+                    if (!File.Exists(path))
+                        return false;
+
+                    var size = new FileInfo(path).Length;
+                    if (size == lastSize)
+                        return true;
+
+                    lastSize = size;
+                    Thread.Sleep(delayMs);
+                }
+            }
+            catch { }
+
+            return false;
+        }
+
+        private bool RunFfmpeg(string args, out string error)
+        {
+            error = string.Empty;
+
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "/usr/bin/ffmpeg",
+                    Arguments = args,
+                    RedirectStandardError = true,
+                    RedirectStandardOutput = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using var p = Process.Start(psi);
+                if (p == null)
+                {
+                    error = "Failed to start ffmpeg process";
+                    return false;
+                }
+
+                error = p.StandardError.ReadToEnd();
+                p.WaitForExit();
+
+                return p.ExitCode == 0;
+            }
+            catch (Exception ex)
+            {
+                error = ex.ToString();
+                return false;
+            }
+        }
+
+        private void TryDeleteFile(string path)
+        {
+            try
+            {
+                if (File.Exists(path))
+                    File.Delete(path);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to delete file {File}", path);
+            }
+        }
+
+
+
 
         public async Task<StreamInfoDto?> GetStreamInfoAsync(int userId)
         {
