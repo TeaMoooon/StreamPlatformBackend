@@ -125,9 +125,7 @@ namespace StreamPlatformBackend.Services
 
 
 
-        // ==================================================
-        // User private methods
-        // ==================================================
+        // ============== User private methods=========
 
         private async Task<bool> UpdateEmailAsync(UserModel user, string? email)
         {
@@ -333,9 +331,7 @@ namespace StreamPlatformBackend.Services
 
 
 
-        // ==================================================
-        // Stream settings
-        // ==================================================
+        // ========================== Stream settings ===============================
         public async Task<bool> UpdateStreamSettingsAsync(int userId, StreamUpdateDto dto)
         {
             var stream = (await _context.Users.Include(u => u.CurrentStream).ThenInclude(s => s.Tags).FirstOrDefaultAsync(u => u.Id == userId))?.CurrentStream;
@@ -357,8 +353,7 @@ namespace StreamPlatformBackend.Services
             return true;
         }
 
-        public async Task<(List<StreamCategoryForSettingsDto> categories, int totalCount)> GetCategoriesAsync(
-    string? search, int page, int pageSize)
+        public async Task<(List<StreamCategoryForSettingsDto> categories, int totalCount)> GetCategoriesAsync(string? search, int page, int pageSize)
         {
             var query = _context.StreamCategories.AsQueryable();
 
@@ -391,9 +386,7 @@ namespace StreamPlatformBackend.Services
 
 
 
-        // ==================================================
-        // Stream private methods
-        // ==================================================
+        // ====================== Stream private methods ========================
         private Task UpdateStreamNameAsync(StreamModel stream, string name)
         {
             stream.StreamName = name.Trim();
@@ -449,6 +442,7 @@ namespace StreamPlatformBackend.Services
             stream.Tags = new HashSet<StreamTagModel>(stream.Tags
                 .Where(t => !toRemove.Contains(t.TagId)));
         }
+
         private async Task<string> UploadStreamPreviewAsync(StreamModel stream, IFormFile file)
         {
             var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".webp" };
@@ -458,7 +452,7 @@ namespace StreamPlatformBackend.Services
                 throw new ArgumentException("Разрешены только JPG, PNG, WEBP");
 
             string baseMediaPath = _mediaPath ?? "/var/www/streamplatform/media";
-            var folderPath = Path.Combine(baseMediaPath, "streams", stream.Id.ToString());
+            var folderPath = Path.Combine(baseMediaPath, "users", stream.UserId.ToString(), "streams", stream.Id.ToString());
 
             Directory.CreateDirectory(folderPath);
 
@@ -468,11 +462,12 @@ namespace StreamPlatformBackend.Services
             using (var streamFile = new FileStream(fullPath, FileMode.Create))
                 await file.CopyToAsync(streamFile);
 
-            string url = $"/media/streams/{stream.Id}/{fileName}";
+            string url = $"/media/users/{stream.UserId}/streams/{stream.Id}/{fileName}";
             stream.PreviewUrl = url;
 
             return url;
         }
+
 
 
     }
