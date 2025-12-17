@@ -32,6 +32,7 @@ namespace StreamPlatformBackend.Services
         private readonly INotificationRepository _notificationRepository;
         private readonly INotificationSender _notificationSender;
         private readonly IServiceScopeFactory _scopeFactory;
+        private readonly ILiveTranscoderService _liveTranscoder;
 
         private readonly TimeSpan ReconnectWindow = TimeSpan.FromSeconds(30);
         private readonly string RecordsBase = "/var/www/streamplatform/records/";
@@ -41,13 +42,15 @@ namespace StreamPlatformBackend.Services
                             INotificationRepository notificationRepository, 
                             INotificationSender notificationSender, 
                             ILogger<StreamService> logger,
-                            IServiceScopeFactory scopeFactory)
+                            IServiceScopeFactory scopeFactory,
+                             ILiveTranscoderService liveTranscoder)
         {
             _context = context;
             _notificationRepository = notificationRepository;
             _notificationSender = notificationSender;
             _logger = logger;
             _scopeFactory = scopeFactory;
+            _liveTranscoder = liveTranscoder;
         }
 
         public async Task<StreamModel?> GetActiveStreamForUserAsync(int userId)
@@ -147,6 +150,7 @@ namespace StreamPlatformBackend.Services
             await UpdateStreamTagsAsync(stream, user.LastTags);
             await _context.SaveChangesAsync();
 
+            await _liveTranscoder.StartAsync(stream, user);
 
             // --- 6. Отправка уведомлений подписчикам ---
             var subscribers = await _context.Subscriptions
@@ -246,6 +250,8 @@ namespace StreamPlatformBackend.Services
                 // ❌ Реальное завершение стрима
                 // ===============================
                 var usr = s.User;
+
+                await _liveTranscoder.StopAsync(s.Id);
 
                 s.EndedAt = DateTime.UtcNow;
                 usr.IsOnline = false;
