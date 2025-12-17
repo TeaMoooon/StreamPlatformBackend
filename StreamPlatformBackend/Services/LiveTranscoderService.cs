@@ -63,6 +63,18 @@ namespace StreamPlatformBackend.Services
 
             var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
 
+            process.OutputDataReceived += (s, e) =>
+            {
+                if (!string.IsNullOrEmpty(e.Data))
+                    _logger.LogInformation("[FFmpeg][Stream {StreamId}] {Line}", stream.Id, e.Data);
+            };
+
+            process.ErrorDataReceived += (s, e) =>
+            {
+                if (!string.IsNullOrEmpty(e.Data))
+                    _logger.LogError("[FFmpeg][Stream {StreamId}] {Line}", stream.Id, e.Data);
+            };
+
             process.Exited += (_, _) =>
             {
                 _processes.TryRemove(stream.Id, out _);
@@ -72,16 +84,21 @@ namespace StreamPlatformBackend.Services
             if (!process.Start())
                 throw new InvalidOperationException("Failed to start ffmpeg process");
 
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+
             _processes[stream.Id] = process;
 
             _logger.LogInformation(
-                "Live transcoder started. StreamId={StreamId}, StreamKey={StreamKey}",
+                "Live transcoder started. StreamId={StreamId}, StreamKey={StreamKey}, Output={OutputPlaylist}",
                 stream.Id,
-                streamKey
+                streamKey,
+                outputPlaylist
             );
 
             await Task.CompletedTask;
         }
+
 
         public async Task StopAsync(int streamId)
         {
