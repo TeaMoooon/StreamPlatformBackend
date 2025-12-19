@@ -102,9 +102,10 @@ namespace StreamPlatformBackend.Data
                 .HasIndex(t => t.Slug)
                 .IsUnique();
 
+            /*
             modelBuilder.Entity<StreamModel>()
                 .HasIndex(x => x.PublicId)
-                .IsUnique();
+                .IsUnique();*/
         }
 
     }
