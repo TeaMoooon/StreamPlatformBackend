@@ -118,7 +118,8 @@ namespace StreamPlatformBackend.Services
                 StartedAt = now,
                 TotalViews = 0,
                 RecordEnabled = user.RecordEnabled,  // здесь важно
-                LastPingAt = now
+                LastPingAt = now,
+                PublicId = Guid.NewGuid().ToString()
             };
 
             _context.Streams.Add(stream);
@@ -488,7 +489,7 @@ namespace StreamPlatformBackend.Services
                 StreamerId = user.Id,
                 Tags = stream.Tags.Select(st => st.Tag.Name).ToList(),
                 PreviewUrl = stream.PreviewUrl,
-                HlsUrl = $"/hls/{user.StreamKey}.m3u8",
+                HlsUrl = $"/hls/{stream.PublicId}/master.m3u8",
                 TotalViews = stream.TotalViews,
                 StartedAt = stream.StartedAt,
                 IsLive = stream.EndedAt == null,
@@ -561,10 +562,12 @@ namespace StreamPlatformBackend.Services
                 StreamerId = user.Id,
                 Tags = stream.Tags.Select(st => st.Tag.Name).ToList(),
                 PreviewUrl = stream.PreviewUrl,
-                HlsUrl = $"/hls/{user.StreamKey}.m3u8",
+                HlsUrl = $"/hls/{stream.PublicId}/master.m3u8",
                 TotalViews = stream.TotalViews,
                 StartedAt = stream.StartedAt,
-                IsLive = stream.EndedAt == null
+                IsLive = stream.EndedAt == null,
+                Title = stream.StreamName
+
             };
         }
 

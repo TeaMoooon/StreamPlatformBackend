@@ -38,18 +38,48 @@ namespace StreamPlatformBackend.Services
             }
 
             var streamKey = user.StreamKey;
-            var outputDir = Path.Combine(LiveBasePath, streamKey, "720p");
-            Directory.CreateDirectory(outputDir);
+            var baseOutputDir = Path.Combine(LiveBasePath, stream.PublicId);
 
-            var outputPlaylist = Path.Combine(outputDir, "index.m3u8");
+            Directory.CreateDirectory(baseOutputDir);
+            Directory.CreateDirectory(Path.Combine(baseOutputDir, "1080p"));
+            Directory.CreateDirectory(Path.Combine(baseOutputDir, "720p"));
+            Directory.CreateDirectory(Path.Combine(baseOutputDir, "480p"));
 
-            var args = $"-hide_banner -loglevel warning " +
-                       $"-i {RtmpBaseUrl}/{streamKey} " +
-                       "-c:v libx264 -preset veryfast -tune zerolatency " +
-                       "-s 1280x720 -b:v 3000k " +
-                       "-c:a aac -b:a 128k " +
-                       "-f hls -hls_time 2 -hls_list_size 6 -hls_flags delete_segments " +
-                       $"\"{outputPlaylist}\"";
+            var masterPlaylist = Path.Combine(baseOutputDir, "master.m3u8");
+
+            var args =
+                "-hide_banner -loglevel warning " +
+                $"-i {RtmpBaseUrl}/{streamKey} " +
+
+                // ====== video split ======
+                "-filter_complex " +
+                "\"[0:v]split=3[v1080][v720][v480];" +
+                "[v1080]scale=1920:1080[v1080out];" +
+                "[v720]scale=1280:720[v720out];" +
+                "[v480]scale=854:480[v480out]\" " +
+
+                // ====== mapping ======
+                "-map [v1080out] -map 0:a " +
+                "-map [v720out]  -map 0:a " +
+                "-map [v480out]  -map 0:a " +
+
+                // ====== encoding ======
+                "-c:v libx264 -preset veryfast -tune zerolatency " +
+                "-c:a aac -b:a 128k " +
+
+                "-b:v:0 6000k -maxrate:v:0 6500k -bufsize:v:0 12000k " +
+                "-b:v:1 3000k -maxrate:v:1 3500k -bufsize:v:1 6000k " +
+                "-b:v:2 1200k -maxrate:v:2 1500k -bufsize:v:2 3000k " +
+
+                // ====== HLS ======
+                "-f hls " +
+                "-hls_time 2 " +
+                "-hls_list_size 6 " +
+                "-hls_flags delete_segments " +
+                "-hls_segment_filename \"" + baseOutputDir + "/%v/segment_%03d.ts\" " +
+                "-master_pl_name master.m3u8 " +
+                "-var_stream_map \"v:0,a:0 v:1,a:1 v:2,a:2\" " +
+                $"\"{baseOutputDir}/%v/index.m3u8\"";
 
             var psi = new ProcessStartInfo
             {
@@ -63,15 +93,9 @@ namespace StreamPlatformBackend.Services
 
             var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
 
-            process.OutputDataReceived += (s, e) =>
+            process.ErrorDataReceived += (_, e) =>
             {
-                if (!string.IsNullOrEmpty(e.Data))
-                    _logger.LogInformation("[FFmpeg][Stream {StreamId}] {Line}", stream.Id, e.Data);
-            };
-
-            process.ErrorDataReceived += (s, e) =>
-            {
-                if (!string.IsNullOrEmpty(e.Data))
+                if (!string.IsNullOrWhiteSpace(e.Data))
                     _logger.LogError("[FFmpeg][Stream {StreamId}] {Line}", stream.Id, e.Data);
             };
 
@@ -84,20 +108,18 @@ namespace StreamPlatformBackend.Services
             if (!process.Start())
                 throw new InvalidOperationException("Failed to start ffmpeg process");
 
-            process.BeginOutputReadLine();
             process.BeginErrorReadLine();
-
             _processes[stream.Id] = process;
 
             _logger.LogInformation(
-                "Live transcoder started. StreamId={StreamId}, StreamKey={StreamKey}, Output={OutputPlaylist}",
+                "Live transcoder started. StreamId={StreamId}, PublicId={PublicId}",
                 stream.Id,
-                streamKey,
-                outputPlaylist
+                stream.PublicId
             );
 
             await Task.CompletedTask;
         }
+
 
 
         public async Task StopAsync(int streamId)

@@ -42,6 +42,10 @@ namespace StreamPlatformBackend.Models.Stream
 
         public DateTime? LastPingAt { get; set; }
         public bool WaitingReconnect { get; set; }
+
+        [Required]
+        [MaxLength(36)]
+        public string PublicId { get; set; } = null!;
     }
 }
 
