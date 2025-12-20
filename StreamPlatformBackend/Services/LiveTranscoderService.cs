@@ -32,93 +32,71 @@ namespace StreamPlatformBackend.Services
         public async Task StartAsync(StreamModel stream, UserModel user)
         {
             if (_processes.ContainsKey(stream.Id))
-            {
-                _logger.LogWarning("Live transcoder already running for stream {StreamId}", stream.Id);
                 return;
-            }
 
             var streamKey = user.StreamKey;
-            var baseOutputDir = Path.Combine(LiveBasePath, stream.PublicId);
+            var baseDir = Path.Combine(LiveBasePath, stream.PublicId);
 
-            Directory.CreateDirectory(baseOutputDir);
-            Directory.CreateDirectory(Path.Combine(baseOutputDir, "1080p"));
-            Directory.CreateDirectory(Path.Combine(baseOutputDir, "720p"));
-            Directory.CreateDirectory(Path.Combine(baseOutputDir, "480p"));
+            Directory.CreateDirectory(baseDir);
+            Directory.CreateDirectory(Path.Combine(baseDir, "1080p"));
+            Directory.CreateDirectory(Path.Combine(baseDir, "720p"));
+            Directory.CreateDirectory(Path.Combine(baseDir, "480p"));
 
-            var masterPlaylist = Path.Combine(baseOutputDir, "master.m3u8");
+            var args = $@"
+-hide_banner -loglevel warning
+-i {RtmpBaseUrl}/{streamKey}
 
-            var args =
-                "-hide_banner -loglevel warning " +
-                $"-i {RtmpBaseUrl}/{streamKey} " +
+-map 0:v -map 0:a
+-c:v:0 libx264 -preset veryfast -tune zerolatency -s 1920x1080 -b:v:0 6000k
+-c:a:0 aac -b:a:0 160k
+-f hls -hls_time 2 -hls_list_size 6 -hls_flags delete_segments
+-hls_segment_filename ""{baseDir}/1080p/index_%03d.ts""
+""{baseDir}/1080p/index.m3u8""
 
-                // ====== video split ======
-                "-filter_complex " +
-                "\"[0:v]split=3[v1080][v720][v480];" +
-                "[v1080]scale=1920:1080[v1080out];" +
-                "[v720]scale=1280:720[v720out];" +
-                "[v480]scale=854:480[v480out]\" " +
+-map 0:v -map 0:a
+-c:v:1 libx264 -preset veryfast -tune zerolatency -s 1280x720 -b:v:1 3000k
+-c:a:1 aac -b:a:1 128k
+-f hls -hls_time 2 -hls_list_size 6 -hls_flags delete_segments
+-hls_segment_filename ""{baseDir}/720p/index_%03d.ts""
+""{baseDir}/720p/index.m3u8""
 
-                // ====== mapping ======
-                "-map [v1080out] -map 0:a " +
-                "-map [v720out]  -map 0:a " +
-                "-map [v480out]  -map 0:a " +
-
-                // ====== encoding ======
-                "-c:v libx264 -preset veryfast -tune zerolatency " +
-                "-c:a aac -b:a 128k " +
-
-                "-b:v:0 6000k -maxrate:v:0 6500k -bufsize:v:0 12000k " +
-                "-b:v:1 3000k -maxrate:v:1 3500k -bufsize:v:1 6000k " +
-                "-b:v:2 1200k -maxrate:v:2 1500k -bufsize:v:2 3000k " +
-
-                // ====== HLS ======
-                "-f hls " +
-                "-hls_time 2 " +
-                "-hls_list_size 6 " +
-                "-hls_flags delete_segments " +
-                "-hls_segment_filename \"" + baseOutputDir + "/%v/segment_%03d.ts\" " +
-                "-master_pl_name master.m3u8 " +
-                "-var_stream_map \"v:0,a:0 v:1,a:1 v:2,a:2\" " +
-                $"\"{baseOutputDir}/%v/index.m3u8\"";
+-map 0:v -map 0:a
+-c:v:2 libx264 -preset veryfast -tune zerolatency -s 854x480 -b:v:2 1500k
+-c:a:2 aac -b:a:2 96k
+-f hls -hls_time 2 -hls_list_size 6 -hls_flags delete_segments
+-hls_segment_filename ""{baseDir}/480p/index_%03d.ts""
+""{baseDir}/480p/index.m3u8""
+";
 
             var psi = new ProcessStartInfo
             {
                 FileName = FfmpegPath,
-                Arguments = args,
+                Arguments = args.Replace("\n", " "),
                 RedirectStandardError = true,
-                RedirectStandardOutput = true,
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
 
-            var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+            var process = Process.Start(psi)
+                ?? throw new Exception("Failed to start ffmpeg");
 
-            process.ErrorDataReceived += (_, e) =>
-            {
-                if (!string.IsNullOrWhiteSpace(e.Data))
-                    _logger.LogError("[FFmpeg][Stream {StreamId}] {Line}", stream.Id, e.Data);
-            };
-
-            process.Exited += (_, _) =>
-            {
-                _processes.TryRemove(stream.Id, out _);
-                _logger.LogInformation("Live transcoder exited for stream {StreamId}", stream.Id);
-            };
-
-            if (!process.Start())
-                throw new InvalidOperationException("Failed to start ffmpeg process");
-
-            process.BeginErrorReadLine();
             _processes[stream.Id] = process;
 
-            _logger.LogInformation(
-                "Live transcoder started. StreamId={StreamId}, PublicId={PublicId}",
-                stream.Id,
-                stream.PublicId
-            );
+            File.WriteAllText(Path.Combine(baseDir, "master.m3u8"),
+        @"#EXTM3U
+#EXT-X-VERSION:3
+#EXT-X-STREAM-INF:BANDWIDTH=6500000,RESOLUTION=1920x1080
+1080p/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=3500000,RESOLUTION=1280x720
+720p/index.m3u8
+#EXT-X-STREAM-INF:BANDWIDTH=1800000,RESOLUTION=854x480
+480p/index.m3u8
+");
 
-            await Task.CompletedTask;
+            _logger.LogInformation("HLS master playlist created for stream {StreamId}", stream.Id);
         }
+
+
 
 
 
