@@ -73,6 +73,7 @@ namespace StreamPlatformBackend.Services
 -hls_time 3
 -hls_list_size 12
 -hls_flags delete_segments+append_list
+-master_pl_name ""master.m3u8""
 -hls_segment_filename ""{baseDir}/%v/index_%03d.ts""
 -var_stream_map ""v:0,a:0 v:1,a:1 v:2,a:2""
 ""{baseDir}/%v/index.m3u8""
