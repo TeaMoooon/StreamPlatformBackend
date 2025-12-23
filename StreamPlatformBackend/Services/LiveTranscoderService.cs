@@ -46,21 +46,21 @@ namespace StreamPlatformBackend.Services
 -hide_banner -loglevel warning
 -i {RtmpBaseUrl}/{streamKey}
 
--map 0:v -map 0:a
+-map 0:v -map 0:a?
 -c:v:0 libx264 -preset veryfast -tune zerolatency -s 1920x1080 -b:v:0 6000k
 -c:a:0 aac -b:a:0 160k
 -f hls -hls_time 2 -hls_list_size 10 -hls_flags delete_segments+append_list
 -hls_segment_filename ""{baseDir}/1080p/index_%03d.ts""
 ""{baseDir}/1080p/index.m3u8""
 
--map 0:v -map 0:a
+-map 0:v -map 0:a?
 -c:v:1 libx264 -preset veryfast -tune zerolatency -s 1280x720 -b:v:1 3000k
 -c:a:1 aac -b:a:1 128k
 -f hls -hls_time 2 -hls_list_size 10 -hls_flags delete_segments+append_list
 -hls_segment_filename ""{baseDir}/720p/index_%03d.ts""
 ""{baseDir}/720p/index.m3u8""
 
--map 0:v -map 0:a
+-map 0:v -map 0:a?
 -c:v:2 libx264 -preset veryfast -tune zerolatency -s 854x480 -b:v:2 1500k
 -c:a:2 aac -b:a:2 96k
 -f hls -hls_time 2 -hls_list_size 10 -hls_flags delete_segments+append_list
@@ -79,6 +79,13 @@ namespace StreamPlatformBackend.Services
 
             var process = Process.Start(psi)
                 ?? throw new Exception("Failed to start ffmpeg");
+
+            process.ErrorDataReceived += (s, e) =>
+            {
+                if (!string.IsNullOrWhiteSpace(e.Data))
+                    _logger.LogError("[ffmpeg:{StreamId}] {Line}", stream.Id, e.Data);
+            };
+            process.BeginErrorReadLine();
 
             _processes[stream.Id] = process;
 
