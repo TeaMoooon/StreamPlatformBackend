@@ -38,11 +38,13 @@ namespace StreamPlatformBackend.Services
             var baseDir = Path.Combine(LiveBasePath, stream.PublicId);
 
             Directory.CreateDirectory(baseDir);
+            Directory.CreateDirectory(Path.Combine(baseDir, "0")); // 1080p
+            Directory.CreateDirectory(Path.Combine(baseDir, "1")); // 720p
+            Directory.CreateDirectory(Path.Combine(baseDir, "2")); // 480p
 
             var args = $@"
 -hide_banner -loglevel warning
 
--reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 2
 -i {RtmpBaseUrl}/{streamKey}
 
 -filter_complex ""
@@ -59,15 +61,14 @@ namespace StreamPlatformBackend.Services
 
 -c:v libx264 -preset veryfast -profile:v main -level 4.1
 -g 60 -keyint_min 60 -sc_threshold 0
--c:a aac
+
+-c:a aac -b:a 128k
 
 -b:v:0 6000k -maxrate:v:0 6500k -bufsize:v:0 12000k
 -b:v:1 3000k -maxrate:v:1 3500k -bufsize:v:1 6000k
 -b:v:2 1500k -maxrate:v:2 1800k -bufsize:v:2 3000k
 
 -b:a:0 160k
--b:a:1 128k
--b:a:2 96k
 
 -f hls
 -hls_time 3
