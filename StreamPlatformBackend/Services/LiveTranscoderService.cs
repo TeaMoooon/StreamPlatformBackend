@@ -38,9 +38,6 @@ namespace StreamPlatformBackend.Services
             var baseDir = Path.Combine(LiveBasePath, stream.PublicId);
 
             Directory.CreateDirectory(baseDir);
-            //Directory.CreateDirectory(Path.Combine(baseDir, "0")); // 1080p
-            //Directory.CreateDirectory(Path.Combine(baseDir, "1")); // 720p
-            //Directory.CreateDirectory(Path.Combine(baseDir, "2")); // 480p
 
             var args = $@"
 -hide_banner -loglevel info
@@ -49,32 +46,35 @@ namespace StreamPlatformBackend.Services
 
 -filter_complex ""
 [0:v]split=3[v1080][v720][v480];
+[0:a]asplit=3[a1080][a720][a480];
 [v1080]scale=1920:1080,fps=30[v1080out];
-[v720] scale=1280:720,fps=30[v720out];
-[v480] scale=854:480,fps=30[v480out]
+[v720]scale=1280:720,fps=30[v720out];
+[v480]scale=854:480,fps=30[v480out]
 ""
 
--map ""[v1080out]"" -map 0:a?
--map ""[v720out]"" -map 0:a?
--map ""[v480out]"" -map 0:a?
+-map ""[v1080out]"" -map ""[a1080]""
+-map ""[v720out]""  -map ""[a720]""
+-map ""[v480out]""  -map ""[a480]""
 
 -c:v libx264 -preset veryfast -profile:v main -level 4.1
 -g 60 -keyint_min 60 -sc_threshold 0
 
--c:a aac -b:a 128k
+-c:a aac
 
 -b:v:0 6000k -maxrate:v:0 6500k -bufsize:v:0 12000k
 -b:v:1 3000k -maxrate:v:1 3500k -bufsize:v:1 6000k
 -b:v:2 1500k -maxrate:v:2 1800k -bufsize:v:2 3000k
 
 -b:a:0 160k
+-b:a:1 128k
+-b:a:2 96k
 
 -f hls
 -hls_time 3
 -hls_list_size 12
 -hls_flags delete_segments+append_list
 -hls_segment_filename ""{baseDir}/%v/index_%03d.ts""
--var_stream_map ""v:0,a:0 v:1,a:0 v:2,a:0""
+-var_stream_map ""v:0,a:0 v:1,a:1 v:2,a:2""
 ""{baseDir}/%v/index.m3u8""
 ";
 
@@ -101,6 +101,7 @@ namespace StreamPlatformBackend.Services
 
             _logger.LogInformation("Live transcoder started for stream {StreamId}", stream.Id);
         }
+
 
 
 
