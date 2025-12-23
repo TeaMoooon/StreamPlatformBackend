@@ -38,12 +38,12 @@ namespace StreamPlatformBackend.Services
             var baseDir = Path.Combine(LiveBasePath, stream.PublicId);
 
             Directory.CreateDirectory(baseDir);
-            Directory.CreateDirectory(Path.Combine(baseDir, "0")); // 1080p
-            Directory.CreateDirectory(Path.Combine(baseDir, "1")); // 720p
-            Directory.CreateDirectory(Path.Combine(baseDir, "2")); // 480p
+            //Directory.CreateDirectory(Path.Combine(baseDir, "0")); // 1080p
+            //Directory.CreateDirectory(Path.Combine(baseDir, "1")); // 720p
+            //Directory.CreateDirectory(Path.Combine(baseDir, "2")); // 480p
 
             var args = $@"
--hide_banner -loglevel warning
+-hide_banner -loglevel info
 
 -i {RtmpBaseUrl}/{streamKey}
 
@@ -54,10 +54,9 @@ namespace StreamPlatformBackend.Services
 [v480] scale=854:480,fps=30[v480out]
 ""
 
--map ""[v1080out]""
--map ""[v720out]""
--map ""[v480out]""
--map 0:a?
+-map ""[v1080out]"" -map 0:a?
+-map ""[v720out]"" -map 0:a?
+-map ""[v480out]"" -map 0:a?
 
 -c:v libx264 -preset veryfast -profile:v main -level 4.1
 -g 60 -keyint_min 60 -sc_threshold 0
