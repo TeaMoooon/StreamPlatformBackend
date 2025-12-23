@@ -38,34 +38,44 @@ namespace StreamPlatformBackend.Services
             var baseDir = Path.Combine(LiveBasePath, stream.PublicId);
 
             Directory.CreateDirectory(baseDir);
-            Directory.CreateDirectory(Path.Combine(baseDir, "1080p"));
-            Directory.CreateDirectory(Path.Combine(baseDir, "720p"));
-            Directory.CreateDirectory(Path.Combine(baseDir, "480p"));
 
             var args = $@"
 -hide_banner -loglevel warning
+
+-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 2
 -i {RtmpBaseUrl}/{streamKey}
 
--map 0:v -map 0:a?
--c:v:0 libx264 -preset veryfast -tune zerolatency -s 1920x1080 -b:v:0 6000k
--c:a:0 aac -b:a:0 160k
--f hls -hls_time 2 -hls_list_size 10 -hls_flags delete_segments+append_list
--hls_segment_filename ""{baseDir}/1080p/index_%03d.ts""
-""{baseDir}/1080p/index.m3u8""
+-filter_complex ""
+[0:v]split=3[v1080][v720][v480];
+[v1080]scale=1920:1080,fps=30[v1080out];
+[v720] scale=1280:720,fps=30[v720out];
+[v480] scale=854:480,fps=30[v480out]
+""
 
--map 0:v -map 0:a?
--c:v:1 libx264 -preset veryfast -tune zerolatency -s 1280x720 -b:v:1 3000k
--c:a:1 aac -b:a:1 128k
--f hls -hls_time 2 -hls_list_size 10 -hls_flags delete_segments+append_list
--hls_segment_filename ""{baseDir}/720p/index_%03d.ts""
-""{baseDir}/720p/index.m3u8""
+-map ""[v1080out]""
+-map ""[v720out]""
+-map ""[v480out]""
+-map 0:a?
 
--map 0:v -map 0:a?
--c:v:2 libx264 -preset veryfast -tune zerolatency -s 854x480 -b:v:2 1500k
--c:a:2 aac -b:a:2 96k
--f hls -hls_time 2 -hls_list_size 10 -hls_flags delete_segments+append_list
--hls_segment_filename ""{baseDir}/480p/index_%03d.ts""
-""{baseDir}/480p/index.m3u8""
+-c:v libx264 -preset veryfast -profile:v main -level 4.1
+-g 60 -keyint_min 60 -sc_threshold 0
+-c:a aac
+
+-b:v:0 6000k -maxrate:v:0 6500k -bufsize:v:0 12000k
+-b:v:1 3000k -maxrate:v:1 3500k -bufsize:v:1 6000k
+-b:v:2 1500k -maxrate:v:2 1800k -bufsize:v:2 3000k
+
+-b:a:0 160k
+-b:a:1 128k
+-b:a:2 96k
+
+-f hls
+-hls_time 3
+-hls_list_size 12
+-hls_flags delete_segments+append_list
+-hls_segment_filename ""{baseDir}/%v/index_%03d.ts""
+-var_stream_map ""v:0,a:0 v:1,a:0 v:2,a:0""
+""{baseDir}/%v/index.m3u8""
 ";
 
             var psi = new ProcessStartInfo
@@ -83,25 +93,15 @@ namespace StreamPlatformBackend.Services
             process.ErrorDataReceived += (s, e) =>
             {
                 if (!string.IsNullOrWhiteSpace(e.Data))
-                    _logger.LogError("[ffmpeg:{StreamId}] {Line}", stream.Id, e.Data);
+                    _logger.LogInformation("[ffmpeg:{StreamId}] {Line}", stream.Id, e.Data);
             };
             process.BeginErrorReadLine();
 
             _processes[stream.Id] = process;
 
-            File.WriteAllText(Path.Combine(baseDir, "master.m3u8"),
-        @"#EXTM3U
-#EXT-X-VERSION:3
-#EXT-X-STREAM-INF:BANDWIDTH=6500000,RESOLUTION=1920x1080
-1080p/index.m3u8
-#EXT-X-STREAM-INF:BANDWIDTH=3500000,RESOLUTION=1280x720
-720p/index.m3u8
-#EXT-X-STREAM-INF:BANDWIDTH=1800000,RESOLUTION=854x480
-480p/index.m3u8
-");
-
-            _logger.LogInformation("HLS master playlist created for stream {StreamId}", stream.Id);
+            _logger.LogInformation("Live transcoder started for stream {StreamId}", stream.Id);
         }
+
 
 
 
