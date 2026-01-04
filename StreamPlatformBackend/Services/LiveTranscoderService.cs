@@ -39,6 +39,11 @@ namespace StreamPlatformBackend.Services
 
             Directory.CreateDirectory(baseDir);
 
+            for (int i = 0; i < 3; i++)
+            {
+                Directory.CreateDirectory(Path.Combine(baseDir, i.ToString()));
+            }
+
             var args = $@"
 -hide_banner -loglevel info
 
