@@ -44,22 +44,29 @@ namespace StreamPlatformBackend.Services
                 Directory.CreateDirectory(Path.Combine(baseDir, i.ToString()));
             }
 
+            await Task.Delay(1500);
+
             var args = $@"
+-reconnect 1
+-reconnect_streamed 1
+-reconnect_delay_max 2
+
 -hide_banner -loglevel info
 
 -i {RtmpBaseUrl}/{streamKey}
 
 -filter_complex ""
 [0:v]split=3[v1080][v720][v480];
-[0:a]asplit=3[a1080][a720][a480];
 [v1080]scale=1920:1080,fps=30[v1080out];
 [v720]scale=1280:720,fps=30[v720out];
-[v480]scale=854:480,fps=30[v480out]
+[v480]scale=854:480,fps=30[v480out];
+[0:a]aresample=async=1:first_pts=0[aout]
 ""
 
--map ""[v1080out]"" -map ""[a1080]""
--map ""[v720out]""  -map ""[a720]""
--map ""[v480out]""  -map ""[a480]""
+
+-map ""[v1080out]"" -map ""[aout]""
+-map ""[v720out]""  -map ""[aout]""
+-map ""[v480out]""  -map ""[aout]""
 
 -c:v libx264 -preset veryfast -profile:v main -level 4.1
 -g 60 -keyint_min 60 -sc_threshold 0
