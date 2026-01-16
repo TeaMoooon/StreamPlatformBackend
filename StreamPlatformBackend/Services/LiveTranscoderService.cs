@@ -55,10 +55,6 @@ namespace StreamPlatformBackend.Services
             }
 
             var args = $@"
--reconnect 1
--reconnect_streamed 1
--reconnect_delay_max 2
-
 -hide_banner -loglevel debug
 
 -i {RtmpBaseUrl}/{streamKey}
