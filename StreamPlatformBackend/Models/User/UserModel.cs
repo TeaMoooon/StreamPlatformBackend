@@ -56,7 +56,7 @@ namespace StreamPlatformBackend.Models.User
         // ---------- Стрим данные ----------
         public string? LastPreviewUrl { get; set; }
         public string? LastStreamName { get; set; }
-        public bool RecordEnabled { get; set; } = true;
+        public bool RecordEnabled { get; set; } = false;
         public int? LastCategoryId { get; set; } 
 
         [ForeignKey(nameof(LastCategoryId))]

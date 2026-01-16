@@ -44,14 +44,22 @@ namespace StreamPlatformBackend.Services
                 Directory.CreateDirectory(Path.Combine(baseDir, i.ToString()));
             }
 
-            await Task.Delay(1500);
+            // ⏳ Ждём, пока RTMP станет доступен
+            if (!await WaitForRtmpAsync(streamKey))
+            {
+                _logger.LogError(
+                    "RTMP stream {StreamKey} not available, ffmpeg will NOT be started",
+                    streamKey
+                );
+                return;
+            }
 
             var args = $@"
 -reconnect 1
 -reconnect_streamed 1
 -reconnect_delay_max 2
 
--hide_banner -loglevel info
+-hide_banner -loglevel debug
 
 -i {RtmpBaseUrl}/{streamKey}
 
@@ -77,9 +85,9 @@ namespace StreamPlatformBackend.Services
 -b:v:1 3000k -maxrate:v:1 3500k -bufsize:v:1 6000k
 -b:v:2 1500k -maxrate:v:2 1800k -bufsize:v:2 3000k
 
--b:a:0 160k
+-b:a:0 128k
 -b:a:1 128k
--b:a:2 96k
+-b:a:2 128k
 
 -f hls
 -hls_time 3
@@ -100,8 +108,23 @@ namespace StreamPlatformBackend.Services
                 CreateNoWindow = true
             };
 
+            _logger.LogInformation("Starting ffmpeg for stream {StreamId}: {Cmd}",
+                                    stream.Id,FfmpegPath + " " + args.Replace("\n", " "));
+
             var process = Process.Start(psi)
                 ?? throw new Exception("Failed to start ffmpeg");
+
+            await Task.Delay(1000);
+
+            if (process.HasExited)
+            {
+                _logger.LogError(
+                    "ffmpeg exited immediately for stream {StreamId} with code {Code}",
+                    stream.Id,
+                    process.ExitCode
+                );
+                return;
+            }
 
             process.ErrorDataReceived += (s, e) =>
             {
@@ -146,5 +169,29 @@ namespace StreamPlatformBackend.Services
         {
             return _processes.ContainsKey(streamId);
         }
+
+
+
+        private async Task<bool> WaitForRtmpAsync(string streamKey, int attempts = 10, int delayMs = 1000)
+        {
+            for (int i = 1; i <= attempts; i++)
+            {
+                try
+                {
+                    using var tcp = new System.Net.Sockets.TcpClient();
+                    await tcp.ConnectAsync("127.0.0.1", 1935);
+                    _logger.LogInformation("RTMP port open (attempt {Attempt})", i);
+                    return true;
+                }
+                catch
+                {
+                    _logger.LogInformation("RTMP not ready yet (attempt {Attempt})", i);
+                    await Task.Delay(delayMs);
+                }
+            }
+
+            return false;
+        }
+
     }
 }
