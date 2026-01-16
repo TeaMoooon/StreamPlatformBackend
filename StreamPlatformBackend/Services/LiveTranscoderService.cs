@@ -51,7 +51,10 @@ namespace StreamPlatformBackend.Services
 
 -fflags +genpts
 
--rw_timeout 5000000
+-max_delay 500000
+-probesize 5000000
+-analyzeduration 5000000
+
 
 -i {RtmpBaseUrl}/{streamKey}
 
@@ -82,8 +85,8 @@ namespace StreamPlatformBackend.Services
 -b:a:2 128k
 
 -f hls
--hls_time 3
--hls_list_size 12
+-hls_time 1
+-hls_list_size 6
 -hls_start_number_source epoch
 -hls_flags delete_segments+append_list
 -master_pl_name ""master.m3u8""
