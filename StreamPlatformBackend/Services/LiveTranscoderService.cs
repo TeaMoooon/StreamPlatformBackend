@@ -63,13 +63,17 @@ namespace StreamPlatformBackend.Services
 [v1080]scale=1920:1080,fps=30[v1080out];
 [v720]scale=1280:720,fps=30[v720out];
 [v480]scale=854:480,fps=30[v480out];
-[0:a]aresample=async=1:first_pts=0[aout]
+[0:a]aresample=async=1:first_pts=0[a1080];
+[0:a]aresample=async=1:first_pts=0[a720];
+[0:a]aresample=async=1:first_pts=0[a480];
 ""
 
 
--map ""[v1080out]"" -map ""[aout]""
--map ""[v720out]""  -map ""[aout]""
--map ""[v480out]""  -map ""[aout]""
+-map ""[v1080out]"" -map ""[a1080]""
+-map ""[v720out]""  -map ""[a720]""
+-map ""[v480out]""  -map ""[a480]""
+
+
 
 -c:v libx264 -preset veryfast -profile:v main -level 4.1
 -g 60 -keyint_min 60 -sc_threshold 0
@@ -80,9 +84,9 @@ namespace StreamPlatformBackend.Services
 -b:v:1 3000k -maxrate:v:1 3500k -bufsize:v:1 6000k
 -b:v:2 1500k -maxrate:v:2 1800k -bufsize:v:2 3000k
 
--b:a:0 128k
+-b:a:0 160k
 -b:a:1 128k
--b:a:2 128k
+-b:a:2 96k
 
 -f hls
 -hls_time 1
