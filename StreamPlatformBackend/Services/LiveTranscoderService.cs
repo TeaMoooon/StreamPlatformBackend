@@ -44,16 +44,18 @@ namespace StreamPlatformBackend.Services
                 Directory.CreateDirectory(Path.Combine(baseDir, i.ToString()));
             }
 
-           
+            /*
+ -fflags +genpts
+
+ -max_delay 500000
+ -probesize 5000000
+ -analyzeduration 5000000
+            */
 
             var args = $@"
 -hide_banner -loglevel debug
 
--fflags +genpts
 
--max_delay 500000
--probesize 5000000
--analyzeduration 5000000
 
 
 -i {RtmpBaseUrl}/{streamKey}
