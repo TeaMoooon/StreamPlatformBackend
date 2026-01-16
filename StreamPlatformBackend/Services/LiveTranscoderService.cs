@@ -44,18 +44,14 @@ namespace StreamPlatformBackend.Services
                 Directory.CreateDirectory(Path.Combine(baseDir, i.ToString()));
             }
 
-            // ⏳ Ждём, пока RTMP станет доступен
-            if (!await WaitForRtmpAsync(streamKey))
-            {
-                _logger.LogError(
-                    "RTMP stream {StreamKey} not available, ffmpeg will NOT be started",
-                    streamKey
-                );
-                return;
-            }
+           
 
             var args = $@"
 -hide_banner -loglevel debug
+
+-fflags +genpts
+
+-rw_timeout 5000000
 
 -i {RtmpBaseUrl}/{streamKey}
 
@@ -88,6 +84,7 @@ namespace StreamPlatformBackend.Services
 -f hls
 -hls_time 3
 -hls_list_size 12
+-hls_start_number_source epoch
 -hls_flags delete_segments+append_list
 -master_pl_name ""master.m3u8""
 -hls_segment_filename ""{baseDir}/%v/index_%03d.ts""
@@ -166,28 +163,6 @@ namespace StreamPlatformBackend.Services
             return _processes.ContainsKey(streamId);
         }
 
-
-
-        private async Task<bool> WaitForRtmpAsync(string streamKey, int attempts = 10, int delayMs = 1000)
-        {
-            for (int i = 1; i <= attempts; i++)
-            {
-                try
-                {
-                    using var tcp = new System.Net.Sockets.TcpClient();
-                    await tcp.ConnectAsync("127.0.0.1", 1935);
-                    _logger.LogInformation("RTMP port open (attempt {Attempt})", i);
-                    return true;
-                }
-                catch
-                {
-                    _logger.LogInformation("RTMP not ready yet (attempt {Attempt})", i);
-                    await Task.Delay(delayMs);
-                }
-            }
-
-            return false;
-        }
 
     }
 }
