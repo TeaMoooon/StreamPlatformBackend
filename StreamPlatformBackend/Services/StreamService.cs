@@ -32,7 +32,6 @@ namespace StreamPlatformBackend.Services
         private readonly INotificationRepository _notificationRepository;
         private readonly INotificationSender _notificationSender;
         private readonly IServiceScopeFactory _scopeFactory;
-        //private readonly ILiveTranscoderService _liveTranscoder;
 
         private readonly TimeSpan ReconnectWindow = TimeSpan.FromSeconds(30);
         private readonly string RecordsBase = "/var/www/streamplatform/records/";
@@ -43,7 +42,6 @@ namespace StreamPlatformBackend.Services
                             INotificationSender notificationSender, 
                             ILogger<StreamService> logger,
                             IServiceScopeFactory scopeFactory
-                            //ILiveTranscoderService liveTranscoder
                             )
         {
             _context = context;
@@ -51,7 +49,6 @@ namespace StreamPlatformBackend.Services
             _notificationSender = notificationSender;
             _logger = logger;
             _scopeFactory = scopeFactory;
-            //_liveTranscoder = liveTranscoder;
         }
 
         public async Task<StreamModel?> GetActiveStreamForUserAsync(int userId)

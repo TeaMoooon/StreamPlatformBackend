@@ -72,7 +72,6 @@ builder.Services.AddScoped<INotificationSender, NotificationSender>();
 builder.Services.AddScoped<ISettingsService, SettingsService>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IStreamService, StreamService>();
-//builder.Services.AddSingleton<ILiveTranscoderService, LiveTranscoderService>();
 
 
 
