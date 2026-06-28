@@ -1,0 +1,10 @@
+services:
+  srs:
+    image: ossrs/srs:5
+    container_name: streamplatform-srs
+    restart: unless-stopped
+    ports:
+      - "1935:1935"
+      - "1985:1985"
+    volumes:
+      - ./srs.conf:/usr/local/srs/conf/srs.conf:ro

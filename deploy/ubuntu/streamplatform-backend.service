@@ -1,0 +1,32 @@
+# Справка: /etc/systemd/system/streamplatform-backend.service
+
+[Unit]
+Description=StreamPlatform Backend (ASP.NET Core)
+After=network.target
+
+[Service]
+User=boxedstream
+Group=boxedstream
+
+WorkingDirectory=/var/www/StreamPlatformBackend/StreamPlatformBackend
+
+ExecStart=/usr/bin/dotnet /var/www/StreamPlatformBackend/StreamPlatformBackend/bin/Debug/net8.0/StreamPlatformBackend.dll
+
+Environment=ASPNETCORE_ENVIRONMENT=Development
+# В unit два раза ASPNETCORE_URLS — в systemd побеждает последняя строка:
+Environment=ASPNETCORE_URLS=http://[::]:5156
+Environment=DOTNET_ROOT=/usr/share/dotnet
+Environment=PATH=/usr/bin:/usr/local/bin:/usr/share/dotnet
+
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=0
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=streamplatform-backend
+
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

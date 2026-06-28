@@ -2,8 +2,7 @@
 using Microsoft.EntityFrameworkCore;
 using StreamPlatformBackend.Data;
 using StreamPlatformBackend.Services;
-using System.Diagnostics;
-using System.IO;
+using System.Text.Json;
 
 [ApiController]
 [Route("api/[controller]")]
@@ -12,13 +11,18 @@ public class StreamCallbackController : ControllerBase
     private readonly IStreamService _streamService;
     private readonly ILogger<StreamCallbackController> _logger;
     private readonly AppDbContext _context;
-    private const string RTMP_SECRET = "your-secret-value";
+    private readonly string _rtmpSecret;
 
-    public StreamCallbackController(IStreamService streamService, ILogger<StreamCallbackController> logger, AppDbContext context)
+    public StreamCallbackController(
+        IStreamService streamService,
+        ILogger<StreamCallbackController> logger,
+        AppDbContext context,
+        IConfiguration configuration)
     {
         _streamService = streamService;
         _logger = logger;
         _context = context;
+        _rtmpSecret = configuration["Rtmp:Secret"] ?? "your-secret-value";
     }
 
     [HttpPost("start")]
@@ -26,15 +30,13 @@ public class StreamCallbackController : ControllerBase
     {
         try
         {
-            var form = await Request.ReadFormAsync();
-            string streamKey = form["name"];
-
-            _logger.LogInformation("=== STREAM START CALLBACK === streamKey={Key}", streamKey);
-
+            var streamKey = await ReadStreamKeyFromCallbackAsync();
             if (string.IsNullOrEmpty(streamKey))
                 return BadRequest("Stream key is required");
 
-            if (secret != RTMP_SECRET)
+            _logger.LogInformation("=== STREAM START CALLBACK === streamKey={Key}", streamKey);
+
+            if (secret != _rtmpSecret)
                 return Unauthorized("Invalid secret");
 
             if (!TryParseUserIdFromStreamKey(streamKey, out int userId))
@@ -55,14 +57,13 @@ public class StreamCallbackController : ControllerBase
     {
         try
         {
-            var form = await Request.ReadFormAsync();
-            string streamKey = form["name"];
+            var streamKey = await ReadStreamKeyFromCallbackAsync();
 
             _logger.LogInformation("=== STREAM END CALLBACK === streamKey={Key}", streamKey);
             if (string.IsNullOrEmpty(streamKey)) return Ok();
 
             if (!TryParseUserIdFromStreamKey(streamKey, out int userId)) return Ok();
-            if (secret != RTMP_SECRET) return Ok();
+            if (secret != _rtmpSecret) return Ok();
 
             await _streamService.EndStreamAsync(userId, streamKey);
             return Ok();
@@ -99,5 +100,42 @@ public class StreamCallbackController : ControllerBase
 
         var parts = streamKey.Split('_', 3); // split максимум на 3 части, Guid после userId
         return parts.Length >= 2 && int.TryParse(parts[1], out userId);
+    }
+
+    /// <summary>
+    /// nginx-rtmp: form field <c>name</c>. SRS: JSON field <c>stream</c>.
+    /// </summary>
+    private async Task<string?> ReadStreamKeyFromCallbackAsync()
+    {
+        if (Request.HasFormContentType)
+        {
+            var form = await Request.ReadFormAsync();
+            var name = form["name"].ToString();
+            if (!string.IsNullOrEmpty(name))
+                return NormalizeStreamKey(name);
+        }
+
+        if (Request.ContentType?.Contains("application/json", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            using var doc = await JsonDocument.ParseAsync(Request.Body);
+            if (doc.RootElement.TryGetProperty("stream", out var streamEl))
+                return NormalizeStreamKey(streamEl.GetString());
+        }
+
+        return null;
+    }
+
+    private static string? NormalizeStreamKey(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        // SRS иногда отдаёт stream с суффиксом (.live и т.п.)
+        var key = raw.Split('?')[0];
+        var dot = key.IndexOf('.');
+        if (dot > 0 && key.StartsWith("live_", StringComparison.Ordinal))
+            key = key[..dot];
+
+        return key;
     }
 }
