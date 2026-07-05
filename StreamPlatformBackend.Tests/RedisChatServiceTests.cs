@@ -1,4 +1,4 @@
-﻿using Xunit;
+using Xunit;
 using Moq;
 using StackExchange.Redis;
 using StreamPlatformBackend.Services;
@@ -151,6 +151,43 @@ namespace StreamPlatformBackend.Tests
                     channel,
                     JsonSerializer.Serialize(message)),
                 Times.Once);
+        }
+
+        [Fact]
+        public async Task GetSlowModeSecondsAsync_ShouldReturnZeroWhenMissing()
+        {
+            _dbMock.Setup(db =>
+                db.StringGetAsync(
+                    It.Is<RedisKey>(k => k.ToString().Contains("slowmode")),
+                    It.IsAny<CommandFlags>()))
+                .ReturnsAsync(RedisValue.Null);
+
+            var result = await _service.GetSlowModeSecondsAsync(1);
+
+            Assert.Equal(0, result);
+        }
+
+        [Fact]
+        public async Task SetSlowModeSecondsAsync_ShouldStoreValue()
+        {
+            await _service.SetSlowModeSecondsAsync(1, 30);
+
+            _dbMock.Verify(db =>
+                db.StringSetAsync(
+                    It.Is<RedisKey>(k => k.ToString().Contains("slowmode")),
+                    (RedisValue)30,
+                    null,
+                    When.Always,
+                    CommandFlags.None),
+                Times.Once);
+        }
+
+        [Fact]
+        public async Task CheckSlowModeAsync_ShouldBypassForMods()
+        {
+            var result = await _service.CheckSlowModeAsync(1, 42, bypassSlowMode: true);
+
+            Assert.Null(result);
         }
     }
 }

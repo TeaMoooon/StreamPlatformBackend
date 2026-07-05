@@ -23,5 +23,9 @@ namespace StreamPlatformBackend.Models.Stream
 
         [ForeignKey(nameof(ModeratorId))]
         public virtual UserModel Moderator { get; set; }
+
+        [Required]
+        [MaxLength(32)]
+        public string Role { get; set; } = "Moderator";
     }
 }

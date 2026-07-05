@@ -1,4 +1,4 @@
-﻿using Azure;
+using Azure;
 using Microsoft.EntityFrameworkCore;
 using StreamPlatformBackend.Models;
 using StreamPlatformBackend.Models.Stream;
@@ -19,6 +19,7 @@ namespace StreamPlatformBackend.Data
         public DbSet<NotificationModel> Notifications { get; set; }
         public DbSet<UserSocialLink> UserSocialLinks { get; set; }
         public DbSet<StreamModerator> StreamModerators { get; set; }
+        public DbSet<StreamChatBan> StreamChatBans { get; set; }
         public DbSet<TagModel> Tags { get; set; }
         public DbSet<StreamTagModel> StreamTags { get; set; }
 
@@ -84,6 +85,32 @@ namespace StreamPlatformBackend.Data
                 .WithMany(u => u.ModeratedStreams)
                 .HasForeignKey(sm => sm.ModeratorId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<StreamModerator>()
+                .HasIndex(sm => new { sm.StreamerId, sm.ModeratorId })
+                .IsUnique();
+
+            modelBuilder.Entity<StreamChatBan>()
+                .HasIndex(b => new { b.StreamerId, b.BannedUserId })
+                .IsUnique();
+
+            modelBuilder.Entity<StreamChatBan>()
+                .HasOne(b => b.Streamer)
+                .WithMany()
+                .HasForeignKey(b => b.StreamerId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<StreamChatBan>()
+                .HasOne(b => b.BannedUser)
+                .WithMany()
+                .HasForeignKey(b => b.BannedUserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<StreamChatBan>()
+                .HasOne(b => b.BannedByUser)
+                .WithMany()
+                .HasForeignKey(b => b.BannedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
 
             modelBuilder.Entity<StreamTagModel>()
                 .HasKey(st => new { st.StreamId, st.TagId });

@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.IdentityModel.Tokens;
@@ -76,6 +76,8 @@ builder.Services.AddScoped<IStreamService, StreamService>();
 
 
 builder.Services.AddScoped<IRedisChatService, RedisChatService>();
+builder.Services.AddScoped<IStreamChatBanService, StreamChatBanService>();
+builder.Services.AddScoped<IStreamTeamService, StreamTeamService>();
 
 
 
@@ -180,6 +182,14 @@ using (var scope = app.Services.CreateScope())
         var context = services.GetRequiredService<AppDbContext>();
         context.Database.Migrate();
         Console.WriteLine("Database migrated successfully");
+
+        var banService = services.GetRequiredService<IStreamChatBanService>();
+        await banService.SyncAllToRedisAsync();
+        Console.WriteLine("Chat bans synced to Redis");
+
+        var teamService = services.GetRequiredService<IStreamTeamService>();
+        await teamService.SyncAllToRedisAsync();
+        Console.WriteLine("Stream team synced to Redis");
     }
     catch (Exception ex)
     {
