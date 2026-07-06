@@ -20,6 +20,7 @@ namespace StreamPlatformBackend.Data
         public DbSet<UserSocialLink> UserSocialLinks { get; set; }
         public DbSet<StreamModerator> StreamModerators { get; set; }
         public DbSet<StreamChatBan> StreamChatBans { get; set; }
+        public DbSet<StreamChatModerationLog> StreamChatModerationLogs { get; set; }
         public DbSet<TagModel> Tags { get; set; }
         public DbSet<StreamTagModel> StreamTags { get; set; }
 
@@ -111,6 +112,21 @@ namespace StreamPlatformBackend.Data
                 .WithMany()
                 .HasForeignKey(b => b.BannedByUserId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<StreamChatModerationLog>()
+                .HasOne(l => l.Streamer)
+                .WithMany()
+                .HasForeignKey(l => l.StreamerId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<StreamChatModerationLog>()
+                .HasOne(l => l.Actor)
+                .WithMany()
+                .HasForeignKey(l => l.ActorUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<StreamChatModerationLog>()
+                .HasIndex(l => new { l.StreamerId, l.CreatedAt });
 
             modelBuilder.Entity<StreamTagModel>()
                 .HasKey(st => new { st.StreamId, st.TagId });

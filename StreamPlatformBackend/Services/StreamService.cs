@@ -111,6 +111,7 @@ namespace StreamPlatformBackend.Services
             {
                 UserId = userId,
                 StreamName = user.LastStreamName ?? $"{user.Nickname}'s Stream",
+                CategoryId = user.LastCategoryId,
                 Tags = new List<StreamTagModel>(),
                 PreviewUrl = user.LastPreviewUrl,
                 StartedAt = now,
@@ -227,6 +228,8 @@ namespace StreamPlatformBackend.Services
 
                 var s = await db.Streams
                     .Include(x => x.User)
+                    .Include(x => x.Tags)
+                        .ThenInclude(t => t.Tag)
                     .FirstOrDefaultAsync(x => x.Id == stream.Id);
 
                 if (s == null)
@@ -255,7 +258,8 @@ namespace StreamPlatformBackend.Services
                 s.EndedAt = DateTime.UtcNow;
                 usr.IsOnline = false;
                 usr.LastStreamName = s.StreamName;
-                usr.LastTags = s.Tags.Select(st => st.Tag.Name).ToList();
+                usr.LastTags = s.Tags.Select(st => st.Tag.Slug).ToList();
+                usr.LastCategoryId = s.CategoryId;
                 usr.LastPreviewUrl = s.PreviewUrl;
                 usr.CurrentStream = null;
 
@@ -475,24 +479,18 @@ namespace StreamPlatformBackend.Services
 
         public async Task<StreamInfoDto?> GetStreamInfoAsync(int userId)
         {
-            var user = await _context.Users.Include(u => u.CurrentStream).FirstOrDefaultAsync(u => u.Id == userId);
+            var user = await _context.Users
+                .Include(u => u.CurrentStream)!
+                    .ThenInclude(s => s!.Category)
+                .Include(u => u.CurrentStream)!
+                    .ThenInclude(s => s!.Tags)
+                    .ThenInclude(st => st.Tag)
+                .FirstOrDefaultAsync(u => u.Id == userId);
+
             var stream = user?.CurrentStream;
             if (stream == null || stream.EndedAt != null) return null;
 
-            return new StreamInfoDto
-            {
-                StreamId = stream.Id,
-                StreamName = stream.StreamName,
-                StreamerName = user.Nickname,
-                StreamerId = user.Id,
-                Tags = stream.Tags.Select(st => st.Tag.Name).ToList(),
-                PreviewUrl = stream.PreviewUrl,
-                HlsUrl = $"/hls/{stream.User.StreamKey}/master.m3u8",
-                TotalViews = stream.TotalViews,
-                StartedAt = stream.StartedAt,
-                IsLive = stream.EndedAt == null,
-                Title = stream.StreamName
-            };
+            return MapStreamInfo(user!, stream);
         }
 
         public async Task<bool> ValidateStreamKeyAsync(string streamKey)
@@ -548,10 +546,22 @@ namespace StreamPlatformBackend.Services
 
         public async Task<StreamInfoDto?> GetStreamInfoByIdAsync(int userId)
         {
-            var user = await _context.Users.Include(u => u.CurrentStream).FirstOrDefaultAsync(u => u.Id == userId);
+            var user = await _context.Users
+                .Include(u => u.CurrentStream)!
+                    .ThenInclude(s => s!.Category)
+                .Include(u => u.CurrentStream)!
+                    .ThenInclude(s => s!.Tags)
+                    .ThenInclude(st => st.Tag)
+                .FirstOrDefaultAsync(u => u.Id == userId);
+
             var stream = user?.CurrentStream;
             if (stream == null || stream.EndedAt != null) return null;
 
+            return MapStreamInfo(user!, stream);
+        }
+
+        private static StreamInfoDto MapStreamInfo(UserModel user, StreamModel stream)
+        {
             return new StreamInfoDto
             {
                 StreamId = stream.Id,
@@ -559,13 +569,17 @@ namespace StreamPlatformBackend.Services
                 StreamerName = user.Nickname,
                 StreamerId = user.Id,
                 Tags = stream.Tags.Select(st => st.Tag.Name).ToList(),
+                CategoryId = stream.CategoryId,
+                CategoryName = stream.Category?.Name,
+                CategoryBannerImageUrl = stream.Category?.BannerImageUrl,
+                StreamLanguage = user.StreamLanguage,
                 PreviewUrl = stream.PreviewUrl,
-                HlsUrl = $"/hls/{stream.User.StreamKey}/master.m3u8",
+                HlsUrl = $"/hls/{user.StreamKey}/master.m3u8",
                 TotalViews = stream.TotalViews,
                 StartedAt = stream.StartedAt,
+                EndedAt = stream.EndedAt,
                 IsLive = stream.EndedAt == null,
                 Title = stream.StreamName
-
             };
         }
 

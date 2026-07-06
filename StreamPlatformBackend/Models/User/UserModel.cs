@@ -1,4 +1,4 @@
-﻿using StreamPlatformBackend.Models.Enums;
+using StreamPlatformBackend.Models.Enums;
 using StreamPlatformBackend.Models.Stream;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
@@ -62,6 +62,11 @@ namespace StreamPlatformBackend.Models.User
         [ForeignKey(nameof(LastCategoryId))]
         public virtual StreamCategoryModel? LastCategory { get; set; }
         public List<string> LastTags { get; set; } = new();
+
+        public string StreamLanguage { get; set; } = "ru";
+
+        [MaxLength(500)]
+        public string StreamAnnouncement { get; set; } = string.Empty;
 
         // Стример → список модераторов
         [JsonIgnore]

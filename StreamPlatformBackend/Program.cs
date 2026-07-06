@@ -78,6 +78,10 @@ builder.Services.AddScoped<IStreamService, StreamService>();
 builder.Services.AddScoped<IRedisChatService, RedisChatService>();
 builder.Services.AddScoped<IStreamChatBanService, StreamChatBanService>();
 builder.Services.AddScoped<IStreamTeamService, StreamTeamService>();
+builder.Services.AddScoped<IStreamChatModerationLogService, StreamChatModerationLogService>();
+builder.Services.AddScoped<IStreamDashboardService, StreamDashboardService>();
+builder.Services.AddScoped<ICategoryBannerSeedService, CategoryBannerSeedService>();
+builder.Services.AddHostedService<CategoryBannerSeedHostedService>();
 
 
 

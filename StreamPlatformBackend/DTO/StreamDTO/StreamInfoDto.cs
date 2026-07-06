@@ -17,5 +17,9 @@
         public DateTime? StartedAt { get; set; }
         public DateTime? EndedAt { get; set; }
         public bool IsLive { get; set; }
+        public int? CategoryId { get; set; }
+        public string? CategoryName { get; set; }
+        public string? CategoryBannerImageUrl { get; set; }
+        public string StreamLanguage { get; set; } = "ru";
     }
 }

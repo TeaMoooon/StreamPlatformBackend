@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.SignalR;
+using StreamPlatformBackend.Constants;
 using StreamPlatformBackend.Hubs;
 using StreamPlatformBackend.Services;
 using System.Security.Claims;
@@ -16,6 +17,7 @@ namespace StreamPlatformBackend.Controllers
         private readonly IStreamTeamService _streamTeamService;
         private readonly IUserService _userService;
         private readonly IHubContext<StreamHub> _hubContext;
+        private readonly IStreamChatModerationLogService _moderationLogService;
         private readonly ILogger<StreamChatBansController> _logger;
 
         public StreamChatBansController(
@@ -23,12 +25,14 @@ namespace StreamPlatformBackend.Controllers
             IStreamTeamService streamTeamService,
             IUserService userService,
             IHubContext<StreamHub> hubContext,
+            IStreamChatModerationLogService moderationLogService,
             ILogger<StreamChatBansController> logger)
         {
             _streamChatBanService = streamChatBanService;
             _streamTeamService = streamTeamService;
             _userService = userService;
             _hubContext = hubContext;
+            _moderationLogService = moderationLogService;
             _logger = logger;
         }
 
@@ -77,6 +81,13 @@ namespace StreamPlatformBackend.Controllers
                         userId = bannedUserId,
                         username = user?.Nickname ?? string.Empty
                     });
+
+                await _moderationLogService.LogAsync(
+                    streamerId,
+                    userId,
+                    ChatModerationActions.Unban,
+                    bannedUserId,
+                    user?.Nickname);
 
                 var bans = await _streamChatBanService.GetBannedUsersAsync(streamerId);
                 return Ok(new { bans });

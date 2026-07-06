@@ -13,6 +13,7 @@ namespace StreamPlatformBackend.Hubs
         private readonly IUserService _userService;
         private readonly IRedisChatService _redisChatService;
         private readonly IStreamChatBanService _streamChatBanService;
+        private readonly IStreamChatModerationLogService _moderationLogService;
         private readonly ILogger<StreamHub> _logger;
 
         // Потокобезопасные коллекции
@@ -24,12 +25,14 @@ namespace StreamPlatformBackend.Hubs
             IUserService userService,
             IRedisChatService redisChatService,
             IStreamChatBanService streamChatBanService,
+            IStreamChatModerationLogService moderationLogService,
             ILogger<StreamHub> logger)
         {
             _streamService = streamService;
             _userService = userService;
             _redisChatService = redisChatService;
             _streamChatBanService = streamChatBanService;
+            _moderationLogService = moderationLogService;
             _logger = logger;
         }
 
@@ -301,10 +304,21 @@ namespace StreamPlatformBackend.Hubs
                 }
 
                 seconds = Math.Clamp(seconds, 0, ChatConstants.MaxSlowModeSeconds);
+                var previous = await _redisChatService.GetSlowModeSecondsAsync(streamerId);
                 await _redisChatService.SetSlowModeSecondsAsync(streamerId, seconds);
 
+                if (seconds != previous)
+                {
+                    await _moderationLogService.LogAsync(
+                        streamerId,
+                        userId,
+                        ChatModerationActions.SlowMode,
+                        details: seconds == 0 ? "Выключен" : $"{seconds} сек");
+                }
+
+                var chatRules = await _redisChatService.GetChatRulesAsync(streamerId);
                 await Clients.Group($"stream_{streamerId}")
-                    .SendAsync("ChatSettingsChanged", new { slowModeSeconds = seconds });
+                    .SendAsync("ChatSettingsChanged", new { slowModeSeconds = seconds, chatRules });
             }
             catch (Exception ex)
             {
@@ -377,6 +391,14 @@ namespace StreamPlatformBackend.Hubs
                         role = target.Role,
                         deletedText
                     });
+
+                await _moderationLogService.LogAsync(
+                    streamerId,
+                    userId,
+                    ChatModerationActions.Delete,
+                    target.UserId,
+                    target.Username,
+                    messageId);
             }
             catch (Exception ex)
             {
@@ -442,6 +464,14 @@ namespace StreamPlatformBackend.Hubs
                         username = targetUser.Nickname,
                         seconds
                     });
+
+                await _moderationLogService.LogAsync(
+                    streamerId,
+                    userId,
+                    ChatModerationActions.Timeout,
+                    targetUserId,
+                    targetUser.Nickname,
+                    details: $"{seconds} сек");
             }
             catch (Exception ex)
             {
@@ -509,6 +539,13 @@ namespace StreamPlatformBackend.Hubs
                         username = targetUser.Nickname,
                         removedFromTeam = true
                     });
+
+                await _moderationLogService.LogAsync(
+                    streamerId,
+                    userId,
+                    ChatModerationActions.Ban,
+                    targetUserId,
+                    targetUser.Nickname);
             }
             catch (Exception ex)
             {
@@ -568,6 +605,13 @@ namespace StreamPlatformBackend.Hubs
                         userId = targetUserId,
                         username = targetUser.Nickname
                     });
+
+                await _moderationLogService.LogAsync(
+                    streamerId,
+                    userId,
+                    ChatModerationActions.Unban,
+                    targetUserId,
+                    targetUser.Nickname);
             }
             catch (Exception ex)
             {
@@ -584,13 +628,14 @@ namespace StreamPlatformBackend.Hubs
             var userId = GetCurrentUserId();
             var messages = await _redisChatService.GetLastMessagesAsync(info.StreamId);
             var slowModeSeconds = await _redisChatService.GetSlowModeSecondsAsync(info.StreamerId);
+            var chatRules = await _redisChatService.GetChatRulesAsync(info.StreamerId);
             var canManageChat = await CanManageChatAsync(userId, info.StreamerId);
             var clientMessages = messages.Select(m => MapMessageForClient(m, canManageChat)).ToList();
             var bannedUserIds = canManageChat
                 ? await _streamChatBanService.GetBannedUserIdsAsync(info.StreamerId)
                 : null;
             await Clients.Caller.SendAsync("LoadChatHistory", clientMessages);
-            await Clients.Caller.SendAsync("ChatSettingsChanged", new { slowModeSeconds, canManageChat, bannedUserIds });
+            await Clients.Caller.SendAsync("ChatSettingsChanged", new { slowModeSeconds, chatRules, canManageChat, bannedUserIds });
         }
 
         private static object MapMessageForClient(ChatMessageDto message, bool canManageChat)
