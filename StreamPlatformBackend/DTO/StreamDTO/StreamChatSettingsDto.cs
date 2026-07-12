@@ -1,15 +1,19 @@
 namespace StreamPlatformBackend.DTO.StreamDTO
 {
+    using StreamPlatformBackend.Constants;
+
     public class StreamChatSettingsDto
     {
         public int SlowModeSeconds { get; set; }
         public string ChatRules { get; set; } = string.Empty;
+        public string ChatMode { get; set; } = ChatModes.Normal;
     }
 
     public class UpdateStreamChatSettingsDto
     {
         public int? SlowModeSeconds { get; set; }
         public string? ChatRules { get; set; }
+        public string? ChatMode { get; set; }
     }
 
     public class StreamChatModerationLogDto

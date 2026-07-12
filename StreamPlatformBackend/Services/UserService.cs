@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -220,7 +220,7 @@ namespace StreamPlatformBackend.Services
         public async Task<IEnumerable<OnlineUserListDto>> GetUserSubscriptionsAsync(int userId)
         {
             return await _context.Subscriptions
-                .Where(s => s.SubscriberId == userId)
+                .Where(s => s.SubscriberId == userId && s.IsActive)
                 .Include(s => s.TargetUser)
                 .ThenInclude(u => u.CurrentStream)
                 .OrderByDescending(s => s.TargetUser.IsOnline)
@@ -253,25 +253,32 @@ namespace StreamPlatformBackend.Services
                 var existingSubscription = await _context.Subscriptions
                     .FirstOrDefaultAsync(s => s.SubscriberId == subscriberId && s.TargetUserId == targetUserId);
 
-                if (existingSubscription != null) return false;
+                if (existingSubscription != null)
+                {
+                    if (existingSubscription.IsActive) return false;
+
+                    existingSubscription.IsActive = true;
+                    existingSubscription.SubscriptionDate = DateTime.UtcNow;
+                    await _context.SaveChangesAsync();
+                    await transaction.CommitAsync();
+                    return true;
+                }
 
                 var subscription = new SubscriptionModel
                 {
                     SubscriberId = subscriberId,
                     TargetUserId = targetUserId,
+                    IsActive = true,
                     SubscriptionDate = DateTime.UtcNow
                 };
 
                 await _context.Subscriptions.AddAsync(subscription);
                 await _context.SaveChangesAsync();
-
                 await transaction.CommitAsync();
 
-
-                // 1) Сохраняем уведомление
                 var notification = new NotificationModel
                 {
-                    UserId = targetUserId, // стример
+                    UserId = targetUserId,
                     Type = NotificationType.NewFollower,
                     PayloadJson = JsonSerializer.Serialize(new
                     {
@@ -282,8 +289,6 @@ namespace StreamPlatformBackend.Services
                 };
 
                 await _notificationRepository.CreateNotificationAsync(notification);
-
-                // 2) Отправляем через SignalR
                 await _notificationSender.SendToUserAsync(notification);
 
                 return true;
@@ -305,9 +310,9 @@ namespace StreamPlatformBackend.Services
                 var subscription = await _context.Subscriptions
                     .FirstOrDefaultAsync(s => s.SubscriberId == subscriberId && s.TargetUserId == targetUserId);
 
-                if (subscription == null) return false;
+                if (subscription == null || !subscription.IsActive) return false;
 
-                _context.Subscriptions.Remove(subscription);
+                subscription.IsActive = false;
                 await _context.SaveChangesAsync();
                 return true;
             }
@@ -320,13 +325,14 @@ namespace StreamPlatformBackend.Services
 
         public async Task<bool> IsSubscribedAsync(int subscriberId, int targetUserId)
         {
-            return await _context.Subscriptions.AnyAsync(s => s.SubscriberId == subscriberId && s.TargetUserId == targetUserId);
+            return await _context.Subscriptions.AnyAsync(s =>
+                s.SubscriberId == subscriberId && s.TargetUserId == targetUserId && s.IsActive);
         }
 
         public async Task<List<UserModel>> GetSubscribersAsync(int streamerId)
         {
             return await _context.Subscriptions
-                .Where(s => s.TargetUserId == streamerId)
+                .Where(s => s.TargetUserId == streamerId && s.IsActive)
                 .Include(s => s.Subscriber)
                 .Select(s => s.Subscriber)
                 .AsNoTracking()
@@ -392,7 +398,7 @@ namespace StreamPlatformBackend.Services
         {
             // Берем TargetUserId всех подписок, где текущий пользователь — подписчик
             return await _context.Subscriptions
-                .Where(s => s.SubscriberId == userId)
+                .Where(s => s.SubscriberId == userId && s.IsActive)
                 .Select(s => s.TargetUserId)
                 .ToListAsync();
         }

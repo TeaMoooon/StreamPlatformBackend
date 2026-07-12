@@ -35,6 +35,10 @@ namespace StreamPlatformBackend.Data
                 .ToTable(t => t.HasCheckConstraint("CK_Subscription_NotSelf", "\"SubscriberId\" != \"TargetUserId\""));
 
             modelBuilder.Entity<SubscriptionModel>()
+                .Property(s => s.IsActive)
+                .HasDefaultValue(true);
+
+            modelBuilder.Entity<SubscriptionModel>()
                 .HasOne(s => s.Subscriber)
                 .WithMany(u => u.Subscriptions)
                 .HasForeignKey(s => s.SubscriberId)

@@ -1,4 +1,4 @@
-﻿using System.ComponentModel.DataAnnotations.Schema;
+using System.ComponentModel.DataAnnotations.Schema;
 using System.Text.Json.Serialization;
 
 namespace StreamPlatformBackend.Models.User
@@ -7,6 +7,8 @@ namespace StreamPlatformBackend.Models.User
     {
         public int SubscriberId { get; set; }
         public int TargetUserId { get; set; }
+
+        public bool IsActive { get; set; } = true;
 
         public DateTime SubscriptionDate { get; set; } = DateTime.UtcNow;
 

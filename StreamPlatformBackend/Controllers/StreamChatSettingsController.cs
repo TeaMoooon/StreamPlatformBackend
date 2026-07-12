@@ -45,7 +45,8 @@ namespace StreamPlatformBackend.Controllers
                 var settings = new StreamChatSettingsDto
                 {
                     SlowModeSeconds = await _redisChatService.GetSlowModeSecondsAsync(streamerId),
-                    ChatRules = await _redisChatService.GetChatRulesAsync(streamerId)
+                    ChatRules = await _redisChatService.GetChatRulesAsync(streamerId),
+                    ChatMode = await _redisChatService.GetChatModeAsync(streamerId)
                 };
 
                 return Ok(settings);
@@ -73,6 +74,7 @@ namespace StreamPlatformBackend.Controllers
                 var previousSlowMode = await _redisChatService.GetSlowModeSecondsAsync(streamerId);
                 var slowModeChanged = false;
                 var rulesChanged = false;
+                var modeChanged = false;
 
                 if (dto.SlowModeSeconds.HasValue)
                 {
@@ -108,19 +110,37 @@ namespace StreamPlatformBackend.Controllers
                     }
                 }
 
+                if (dto.ChatMode != null)
+                {
+                    var mode = ChatModes.Normalize(dto.ChatMode);
+                    var previousMode = await _redisChatService.GetChatModeAsync(streamerId);
+                    if (mode != previousMode)
+                    {
+                        await _redisChatService.SetChatModeAsync(streamerId, mode);
+                        modeChanged = true;
+                        await _moderationLogService.LogAsync(
+                            streamerId,
+                            userId,
+                            ChatModerationActions.ChatMode,
+                            details: ChatModes.GetLabel(mode));
+                    }
+                }
+
                 var slowModeSeconds = await _redisChatService.GetSlowModeSecondsAsync(streamerId);
                 var chatRules = await _redisChatService.GetChatRulesAsync(streamerId);
+                var chatMode = await _redisChatService.GetChatModeAsync(streamerId);
 
-                if (slowModeChanged || rulesChanged)
+                if (slowModeChanged || rulesChanged || modeChanged)
                 {
                     await _hubContext.Clients.Group($"stream_{streamerId}")
-                        .SendAsync("ChatSettingsChanged", new { slowModeSeconds, chatRules });
+                        .SendAsync("ChatSettingsChanged", new { slowModeSeconds, chatRules, chatMode });
                 }
 
                 return Ok(new StreamChatSettingsDto
                 {
                     SlowModeSeconds = slowModeSeconds,
-                    ChatRules = chatRules
+                    ChatRules = chatRules,
+                    ChatMode = chatMode
                 });
             }
             catch (UnauthorizedAccessException)

@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.SignalR;
 using StreamPlatformBackend.Constants;
 using StreamPlatformBackend.DTO.StreamDTO;
+using StreamPlatformBackend.Helpers;
 using StreamPlatformBackend.Services;
 using System.Collections.Concurrent;
 using System.Security.Claims;
@@ -187,92 +188,121 @@ namespace StreamPlatformBackend.Hubs
 
         public async Task SendChatMessage(string text)
         {
-            if (Context.User?.Identity?.IsAuthenticated != true)
+            try
             {
-                await Clients.Caller.SendAsync("Error", "ChatUnauthorized");
-                return;
+                if (Context.User?.Identity?.IsAuthenticated != true)
+                {
+                    await Clients.Caller.SendAsync("Error", "ChatUnauthorized");
+                    return;
+                }
+
+                if (!ConnectionMap.TryGetValue(Context.ConnectionId, out var info))
+                {
+                    await Clients.Caller.SendAsync("Error", "ChatNotJoined");
+                    return;
+                }
+
+                if (info.StreamId <= 0)
+                {
+                    await Clients.Caller.SendAsync("Error", "ChatStreamOffline");
+                    return;
+                }
+
+                int userId = GetCurrentUserId();
+                string username = Context.User.Identity?.Name ?? "Unknown";
+                int streamerId = info.StreamerId;
+
+                var trimmed = (text ?? string.Empty).Trim();
+                if (string.IsNullOrEmpty(trimmed))
+                {
+                    await Clients.Caller.SendAsync("Error", "ChatMessageEmpty");
+                    return;
+                }
+
+                if (trimmed.Length > ChatConstants.MaxMessageLength)
+                {
+                    await Clients.Caller.SendAsync("Error", "ChatMessageTooLong");
+                    return;
+                }
+
+                string role = "User";
+                if (userId == streamerId) role = "Streamer";
+                else if (await _redisChatService.IsModeratorAsync(streamerId, userId)) role = "Moderator";
+                else if (await _redisChatService.IsAssistantAsync(streamerId, userId)) role = "Assistant";
+                else if (Context.User.IsInRole("Admin") || Context.User.IsInRole("SuperAdmin"))
+                    role = "Admin";
+
+                var bypassSlowMode = role is "Streamer" or "Moderator" or "Assistant" or "Admin";
+                var bypassChatMode = bypassSlowMode;
+                if (await _streamChatBanService.IsBannedAsync(streamerId, userId))
+                {
+                    await Clients.Caller.SendAsync("Error", "ChatBanned");
+                    return;
+                }
+
+                var timeoutRemaining = await _redisChatService.GetTimeoutRemainingAsync(streamerId, userId);
+                if (timeoutRemaining.HasValue && role == "User")
+                {
+                    await Clients.Caller.SendAsync("Error", $"ChatTimedOut:{timeoutRemaining.Value}");
+                    return;
+                }
+
+                var slowModeSeconds = await _redisChatService.GetSlowModeSecondsAsync(streamerId);
+                var waitSeconds = await _redisChatService.CheckSlowModeAsync(streamerId, userId, bypassSlowMode);
+                if (waitSeconds.HasValue)
+                {
+                    await Clients.Caller.SendAsync("Error", $"ChatSlowMode:{waitSeconds.Value}");
+                    return;
+                }
+
+                var chatMode = await _redisChatService.GetChatModeAsync(streamerId);
+                if (!bypassChatMode)
+                {
+                    if (chatMode == ChatModes.SubscribersOnly)
+                    {
+                        var isSubscribed = await _userService.IsSubscribedAsync(userId, streamerId);
+                        if (!isSubscribed)
+                        {
+                            await Clients.Caller.SendAsync("Error", "ChatSubscribersOnly");
+                            return;
+                        }
+                    }
+
+                    if (chatMode == ChatModes.EmoteOnly && !ChatMessageValidator.IsEmoteOnlyMessage(trimmed))
+                    {
+                        await Clients.Caller.SendAsync("Error", "ChatEmoteOnly");
+                        return;
+                    }
+                }
+
+                var streamInfo = await _streamService.GetStreamInfoAsync(streamerId);
+                double offset = streamInfo?.StartedAt != null
+                    ? (DateTime.UtcNow - streamInfo.StartedAt.Value).TotalSeconds
+                    : 0;
+
+                var message = new ChatMessageDto
+                {
+                    Id = Guid.NewGuid().ToString("N"),
+                    UserId = userId,
+                    Username = username,
+                    Text = trimmed,
+                    Role = role,
+                    Timestamp = DateTime.UtcNow,
+                    OffsetSeconds = offset
+                };
+
+                await _redisChatService.AddMessageAsync(info.StreamId, message);
+                await _redisChatService.PublishMessageAsync(info.StreamId, message);
+                await _redisChatService.RegisterMessageSentAsync(streamerId, userId, slowModeSeconds);
+
+                await Clients.Group($"stream_{streamerId}")
+                    .SendAsync("ReceiveChatMessage", message);
             }
-
-            if (!ConnectionMap.TryGetValue(Context.ConnectionId, out var info))
+            catch (Exception ex)
             {
-                await Clients.Caller.SendAsync("Error", "ChatNotJoined");
-                return;
+                _logger.LogError(ex, "Error in SendChatMessage");
+                await Clients.Caller.SendAsync("Error", "ChatSendFailed");
             }
-
-            if (info.StreamId <= 0)
-            {
-                await Clients.Caller.SendAsync("Error", "ChatStreamOffline");
-                return;
-            }
-
-            int userId = GetCurrentUserId();
-            string username = Context.User.Identity?.Name ?? "Unknown";
-            int streamerId = info.StreamerId;
-
-            var trimmed = (text ?? string.Empty).Trim();
-            if (string.IsNullOrEmpty(trimmed))
-            {
-                await Clients.Caller.SendAsync("Error", "ChatMessageEmpty");
-                return;
-            }
-
-            if (trimmed.Length > ChatConstants.MaxMessageLength)
-            {
-                await Clients.Caller.SendAsync("Error", "ChatMessageTooLong");
-                return;
-            }
-
-            string role = "User";
-            if (userId == streamerId) role = "Streamer";
-            else if (await _redisChatService.IsModeratorAsync(streamerId, userId)) role = "Moderator";
-            else if (await _redisChatService.IsAssistantAsync(streamerId, userId)) role = "Assistant";
-            else if (Context.User.IsInRole("Admin") || Context.User.IsInRole("SuperAdmin"))
-                role = "Admin";
-
-            var bypassSlowMode = role is "Streamer" or "Moderator" or "Assistant" or "Admin";
-            if (await _streamChatBanService.IsBannedAsync(streamerId, userId))
-            {
-                await Clients.Caller.SendAsync("Error", "ChatBanned");
-                return;
-            }
-
-            var timeoutRemaining = await _redisChatService.GetTimeoutRemainingAsync(streamerId, userId);
-            if (timeoutRemaining.HasValue && role == "User")
-            {
-                await Clients.Caller.SendAsync("Error", $"ChatTimedOut:{timeoutRemaining.Value}");
-                return;
-            }
-
-            var slowModeSeconds = await _redisChatService.GetSlowModeSecondsAsync(streamerId);
-            var waitSeconds = await _redisChatService.CheckSlowModeAsync(streamerId, userId, bypassSlowMode);
-            if (waitSeconds.HasValue)
-            {
-                await Clients.Caller.SendAsync("Error", $"ChatSlowMode:{waitSeconds.Value}");
-                return;
-            }
-
-            var streamInfo = await _streamService.GetStreamInfoAsync(streamerId);
-            double offset = streamInfo?.StartedAt != null
-                ? (DateTime.UtcNow - streamInfo.StartedAt.Value).TotalSeconds
-                : 0;
-
-            var message = new ChatMessageDto
-            {
-                Id = Guid.NewGuid().ToString("N"),
-                UserId = userId,
-                Username = username,
-                Text = trimmed,
-                Role = role,
-                Timestamp = DateTime.UtcNow,
-                OffsetSeconds = offset
-            };
-
-            await _redisChatService.AddMessageAsync(info.StreamId, message);
-            await _redisChatService.PublishMessageAsync(info.StreamId, message);
-            await _redisChatService.RegisterMessageSentAsync(streamerId, userId, slowModeSeconds);
-
-            await Clients.Group($"stream_{streamerId}")
-                .SendAsync("ReceiveChatMessage", message);
         }
 
         /// <summary>Фаза 1: настройка slow mode (UI — в следующих этапах). Только стример/мод/admin.</summary>
@@ -317,8 +347,9 @@ namespace StreamPlatformBackend.Hubs
                 }
 
                 var chatRules = await _redisChatService.GetChatRulesAsync(streamerId);
+                var chatMode = await _redisChatService.GetChatModeAsync(streamerId);
                 await Clients.Group($"stream_{streamerId}")
-                    .SendAsync("ChatSettingsChanged", new { slowModeSeconds = seconds, chatRules });
+                    .SendAsync("ChatSettingsChanged", new { slowModeSeconds = seconds, chatRules, chatMode });
             }
             catch (Exception ex)
             {
@@ -629,13 +660,31 @@ namespace StreamPlatformBackend.Hubs
             var messages = await _redisChatService.GetLastMessagesAsync(info.StreamId);
             var slowModeSeconds = await _redisChatService.GetSlowModeSecondsAsync(info.StreamerId);
             var chatRules = await _redisChatService.GetChatRulesAsync(info.StreamerId);
+            var chatMode = await _redisChatService.GetChatModeAsync(info.StreamerId);
             var canManageChat = await CanManageChatAsync(userId, info.StreamerId);
+            var canSendChat = await CanSendChatAsync(userId, info.StreamerId, canManageChat, chatMode);
             var clientMessages = messages.Select(m => MapMessageForClient(m, canManageChat)).ToList();
             var bannedUserIds = canManageChat
                 ? await _streamChatBanService.GetBannedUserIdsAsync(info.StreamerId)
                 : null;
             await Clients.Caller.SendAsync("LoadChatHistory", clientMessages);
-            await Clients.Caller.SendAsync("ChatSettingsChanged", new { slowModeSeconds, chatRules, canManageChat, bannedUserIds });
+            await Clients.Caller.SendAsync("ChatSettingsChanged", new
+            {
+                slowModeSeconds,
+                chatRules,
+                chatMode,
+                canManageChat,
+                canSendChat,
+                bannedUserIds
+            });
+        }
+
+        private async Task<bool> CanSendChatAsync(int userId, int streamerId, bool canManageChat, string chatMode)
+        {
+            if (userId <= 0) return false;
+            if (canManageChat || userId == streamerId) return true;
+            if (chatMode != ChatModes.SubscribersOnly) return true;
+            return await _userService.IsSubscribedAsync(userId, streamerId);
         }
 
         private static object MapMessageForClient(ChatMessageDto message, bool canManageChat)

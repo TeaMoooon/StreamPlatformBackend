@@ -46,7 +46,7 @@ namespace StreamPlatformBackend.Services
                 return null;
 
             var subscriberCount = await _context.Subscriptions
-                .CountAsync(s => s.TargetUserId == streamerId);
+                .CountAsync(s => s.TargetUserId == streamerId && s.IsActive);
 
             var liveStream = user.CurrentStream is { EndedAt: null } stream ? stream : null;
 

@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using StreamPlatformBackend.Data;
 using StreamPlatformBackend.DTO.StreamDTO;
@@ -154,7 +154,7 @@ namespace StreamPlatformBackend.Services
 
             // --- 6. Отправка уведомлений подписчикам ---
             var subscribers = await _context.Subscriptions
-                .Where(s => s.TargetUserId == userId)
+                .Where(s => s.TargetUserId == userId && s.IsActive)
                 .Include(s => s.Subscriber)
                 .Select(s => s.Subscriber)
                 .ToListAsync();

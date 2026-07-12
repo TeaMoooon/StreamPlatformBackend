@@ -19,6 +19,8 @@ namespace StreamPlatformBackend.Services
         Task SetSlowModeSecondsAsync(int streamerId, int seconds);
         Task<string> GetChatRulesAsync(int streamerId);
         Task SetChatRulesAsync(int streamerId, string rules);
+        Task<string> GetChatModeAsync(int streamerId);
+        Task SetChatModeAsync(int streamerId, string mode);
         Task<int?> CheckSlowModeAsync(int streamerId, int userId, bool bypassSlowMode);
         Task RegisterMessageSentAsync(int streamerId, int userId, int slowModeSeconds);
         Task<bool> MarkMessageDeletedAsync(int streamId, string messageId);
@@ -47,6 +49,7 @@ namespace StreamPlatformBackend.Services
         private string GetAssistantsKey(int streamerId) => $"stream:{streamerId}:assistants";
         private string GetSlowModeKey(int streamerId) => $"chat:{streamerId}:settings:slowmode";
         private string GetChatRulesKey(int streamerId) => $"chat:{streamerId}:settings:rules";
+        private string GetChatModeKey(int streamerId) => $"chat:{streamerId}:settings:mode";
         private string GetLastMessageKey(int streamerId, int userId) => $"chat:{streamerId}:lastmsg:{userId}";
         private string GetTimeoutKey(int streamerId, int userId) => $"chat:{streamerId}:timeout:{userId}";
         private string GetBansKey(int streamerId) => $"chat:{streamerId}:bans";
@@ -130,6 +133,21 @@ namespace StreamPlatformBackend.Services
                 await _db.KeyDeleteAsync(GetChatRulesKey(streamerId));
             else
                 await _db.StringSetAsync(GetChatRulesKey(streamerId), rules);
+        }
+
+        public async Task<string> GetChatModeAsync(int streamerId)
+        {
+            var value = await _db.StringGetAsync(GetChatModeKey(streamerId));
+            return ChatModes.Normalize(value.HasValue ? value.ToString() : null);
+        }
+
+        public async Task SetChatModeAsync(int streamerId, string mode)
+        {
+            mode = ChatModes.Normalize(mode);
+            if (mode == ChatModes.Normal)
+                await _db.KeyDeleteAsync(GetChatModeKey(streamerId));
+            else
+                await _db.StringSetAsync(GetChatModeKey(streamerId), mode);
         }
 
         public async Task<int?> CheckSlowModeAsync(int streamerId, int userId, bool bypassSlowMode)

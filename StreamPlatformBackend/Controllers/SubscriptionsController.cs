@@ -1,12 +1,7 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using StreamPlatformBackend.DTO.UserDTO;
-using StreamPlatformBackend.Models;
-using StreamPlatformBackend.Models.Enums;
 using StreamPlatformBackend.Services;
-using StreamPlatformBackend.Services.NotificationService;
 using System.Security.Claims;
-using System.Text.Json;
 
 namespace StreamPlatformBackend.Controllers
 {
@@ -16,15 +11,11 @@ namespace StreamPlatformBackend.Controllers
     {
         private readonly IUserService _userService;
         private readonly ILogger<SubscriptionsController> _logger;
-        private readonly INotificationRepository _notificationRepository;
-        private readonly INotificationSender _notificationSender;
 
-        public SubscriptionsController(IUserService userService, ILogger<SubscriptionsController> logger, INotificationRepository notificationRepository, INotificationSender notificationSender)
+        public SubscriptionsController(IUserService userService, ILogger<SubscriptionsController> logger)
         {
             _userService = userService;
             _logger = logger;
-            _notificationRepository = notificationRepository;
-            _notificationSender = notificationSender;
         }
 
         /// <summary>
@@ -43,21 +34,6 @@ namespace StreamPlatformBackend.Controllers
                 var subscriberId = GetCurrentUserId();
                 var ok = await _userService.SubscribeToUserAsync(subscriberId, targetUserId);
                 if (!ok) return BadRequest(new { message = "Не удалось подписаться" });
-
-                // 🔔 Создаём уведомление в базе через репозиторий
-                var notification = await _notificationRepository.CreateNotificationAsync(new NotificationModel
-                {
-                    UserId = targetUserId, // стример, который получил нового подписчика
-                    Type = NotificationType.NewFollower,
-                    PayloadJson = JsonSerializer.Serialize(new
-                    {
-                        SubscriberId = subscriberId,
-                        SubscriberName = (await _userService.GetUserByIdAsync(subscriberId))?.Nickname
-                    })
-                });
-
-                // 🔔 Отправка уведомления через SignalR
-                await _notificationSender.SendToUserAsync(notification);
 
                 return Ok(new { message = "Подписка оформлена" });
             }

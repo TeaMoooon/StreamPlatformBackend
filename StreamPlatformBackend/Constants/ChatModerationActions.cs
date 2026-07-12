@@ -8,5 +8,6 @@ namespace StreamPlatformBackend.Constants
         public const string Unban = "Unban";
         public const string SlowMode = "SlowMode";
         public const string RulesUpdate = "RulesUpdate";
+        public const string ChatMode = "ChatMode";
     }
 }
