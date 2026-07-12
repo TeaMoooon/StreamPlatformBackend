@@ -75,6 +75,35 @@ namespace StreamPlatformBackend.Controllers
             }
         }
 
+        [HttpPut("{streamerId:int}/stream/preview")]
+        [Consumes("multipart/form-data")]
+        public async Task<IActionResult> UploadPreview(int streamerId, IFormFile previewImage)
+        {
+            try
+            {
+                var userId = GetCurrentUserId();
+                var (success, error, previewUrl) = await _streamDashboardService.UploadPreviewAsync(
+                    streamerId,
+                    userId,
+                    previewImage);
+
+                if (!success)
+                    return BadRequest(new { message = error });
+
+                var settings = await _streamDashboardService.GetSettingsAsync(streamerId);
+                return Ok(new { previewUrl, settings });
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return Unauthorized(new { message = "Неверный токен авторизации" });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error uploading stream preview for streamer {StreamerId}", streamerId);
+                return StatusCode(500, new { message = "Не удалось загрузить превью" });
+            }
+        }
+
         private async Task<bool> CanManageStreamAsync(int streamerId)
         {
             var userId = GetCurrentUserId();

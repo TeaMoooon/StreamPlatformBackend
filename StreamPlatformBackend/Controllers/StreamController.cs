@@ -61,7 +61,7 @@ public class StreamController : ControllerBase
         // --- Активный стрим ---
         if (stream.EndedAt == null)
         {
-            var hlsUrl = $"/hls/{stream.User.StreamKey}/master.m3u8";
+            var hlsUrl = $"/hls/{stream.User.StreamKey}/master.m3u8?s={stream.Id}";
             return Ok(new { type = "live", url = hlsUrl });
         }
 

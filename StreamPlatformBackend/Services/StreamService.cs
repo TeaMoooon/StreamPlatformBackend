@@ -32,16 +32,19 @@ namespace StreamPlatformBackend.Services
         private readonly INotificationRepository _notificationRepository;
         private readonly INotificationSender _notificationSender;
         private readonly IServiceScopeFactory _scopeFactory;
+        private readonly IStreamLiveNotifier _streamLiveNotifier;
 
         private readonly TimeSpan ReconnectWindow = TimeSpan.FromSeconds(30);
         private readonly string RecordsBase = "/var/www/streamplatform/records/";
         private readonly string MediaBase = "/var/www/streamplatform/media/users/";
+        private readonly string HlsLiveBase = "/var/www/streamplatform/live/";
 
         public StreamService(AppDbContext context, 
                             INotificationRepository notificationRepository, 
                             INotificationSender notificationSender, 
                             ILogger<StreamService> logger,
-                            IServiceScopeFactory scopeFactory
+                            IServiceScopeFactory scopeFactory,
+                            IStreamLiveNotifier streamLiveNotifier
                             )
         {
             _context = context;
@@ -49,6 +52,7 @@ namespace StreamPlatformBackend.Services
             _notificationSender = notificationSender;
             _logger = logger;
             _scopeFactory = scopeFactory;
+            _streamLiveNotifier = streamLiveNotifier;
         }
 
         public async Task<StreamModel?> GetActiveStreamForUserAsync(int userId)
@@ -83,6 +87,7 @@ namespace StreamPlatformBackend.Services
                 user.IsOnline = true;
 
                 await _context.SaveChangesAsync();
+                await NotifyStreamLiveAsync(userId);
                 return active;
             }
 
@@ -102,6 +107,7 @@ namespace StreamPlatformBackend.Services
                 user.IsOnline = true;
 
                 await _context.SaveChangesAsync();
+                await NotifyStreamLiveAsync(userId);
                 return last;
             }
 
@@ -174,6 +180,9 @@ namespace StreamPlatformBackend.Services
                 NotificationType.StreamStarted
             );
 
+            TryCleanHlsOutput(streamKey);
+            await NotifyStreamLiveAsync(userId);
+
             return stream;
         }
 
@@ -207,6 +216,7 @@ namespace StreamPlatformBackend.Services
             {
                 user.IsOnline = false;
                 user.CurrentStream = null;
+                TryCleanHlsOutput(streamKey);
                 await _context.SaveChangesAsync();
                 return true;
             }
@@ -265,6 +275,11 @@ namespace StreamPlatformBackend.Services
 
                 s.WaitingReconnect = false;
                 await db.SaveChangesAsync();
+
+                TryCleanHlsOutput(streamKey);
+
+                var liveNotifier = scope.ServiceProvider.GetRequiredService<IStreamLiveNotifier>();
+                await liveNotifier.PublishStatusAsync(usr.Id, null);
 
                 // Обработка записи
                 try
@@ -560,6 +575,41 @@ namespace StreamPlatformBackend.Services
             return MapStreamInfo(user!, stream);
         }
 
+        private async Task NotifyStreamLiveAsync(int userId)
+        {
+            var info = await GetStreamInfoAsync(userId);
+            await _streamLiveNotifier.PublishStatusAsync(userId, info);
+
+            if (info?.IsLive == true)
+            {
+                _streamLiveNotifier.ScheduleRepublish(
+                    userId,
+                    TimeSpan.FromSeconds(3),
+                    TimeSpan.FromSeconds(8),
+                    TimeSpan.FromSeconds(15));
+            }
+        }
+
+        private void TryCleanHlsOutput(string streamKey)
+        {
+            if (string.IsNullOrWhiteSpace(streamKey))
+                return;
+
+            try
+            {
+                var dir = Path.Combine(HlsLiveBase, streamKey);
+                if (!Directory.Exists(dir))
+                    return;
+
+                Directory.Delete(dir, recursive: true);
+                _logger.LogInformation("Cleaned stale HLS output for {StreamKey}", streamKey);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to clean HLS output for {StreamKey}", streamKey);
+            }
+        }
+
         private static StreamInfoDto MapStreamInfo(UserModel user, StreamModel stream)
         {
             return new StreamInfoDto
@@ -574,7 +624,7 @@ namespace StreamPlatformBackend.Services
                 CategoryBannerImageUrl = stream.Category?.BannerImageUrl,
                 StreamLanguage = user.StreamLanguage,
                 PreviewUrl = stream.PreviewUrl,
-                HlsUrl = $"/hls/{user.StreamKey}/master.m3u8",
+                HlsUrl = $"/hls/{user.StreamKey}/master.m3u8?s={stream.Id}",
                 TotalViews = stream.TotalViews,
                 StartedAt = stream.StartedAt,
                 EndedAt = stream.EndedAt,

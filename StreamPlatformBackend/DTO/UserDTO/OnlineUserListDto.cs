@@ -21,8 +21,13 @@ namespace StreamPlatformBackend.DTO.UserDTO
 
         public string? StreamName { get; set; }
 
-        // Опционально: ID стрима, если понадобится на фронтенде
         public int? StreamId { get; set; }
+
+        public int UserId { get; set; }
+
+        public int TotalViews { get; set; }
+
+        public int ViewerCount { get; set; }
 
 
     }

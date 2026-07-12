@@ -4,6 +4,7 @@ using StreamPlatformBackend.DTO.StreamDTO;
 using StreamPlatformBackend.DTO.UserDTO;
 using StreamPlatformBackend.Services;
 using System.Security.Claims;
+using System.Text.Json;
 
 namespace StreamPlatformBackend.Controllers
 {
@@ -14,11 +15,19 @@ namespace StreamPlatformBackend.Controllers
     public class SettingsController : ControllerBase
     {
         private readonly ISettingsService _settingsService;
+        private readonly IUserService _userService;
+        private readonly IChatNicknameNotifier _chatNicknameNotifier;
         private readonly ILogger<SettingsController> _logger;
 
-        public SettingsController(ISettingsService settingsService, ILogger<SettingsController> logger)
+        public SettingsController(
+            ISettingsService settingsService,
+            IUserService userService,
+            IChatNicknameNotifier chatNicknameNotifier,
+            ILogger<SettingsController> logger)
         {
             _settingsService = settingsService;
+            _userService = userService;
+            _chatNicknameNotifier = chatNicknameNotifier;
             _logger = logger;
         }
 
@@ -45,7 +54,28 @@ namespace StreamPlatformBackend.Controllers
 
             try
             {
+                if (Request.Form.TryGetValue("SocialLinks", out var socialLinksRaw) &&
+                    !string.IsNullOrWhiteSpace(socialLinksRaw))
+                {
+                    dto.SocialLinks = JsonSerializer.Deserialize<List<SocialLinkDto>>(
+                        socialLinksRaw.ToString(),
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+                        ?? new List<SocialLinkDto>();
+                }
+
+                var userBeforeUpdate = await _userService.GetUserByIdAsync(userId);
+                var previousNickname = userBeforeUpdate?.Nickname;
+
                 await _settingsService.UpdateUserProfileAsync(userId, dto);
+
+                if (!string.IsNullOrWhiteSpace(dto.Nickname) && previousNickname != null)
+                {
+                    var normalizedNew = dto.Nickname.Trim().ToLowerInvariant();
+                    if (!string.Equals(previousNickname, normalizedNew, StringComparison.Ordinal))
+                    {
+                        await _chatNicknameNotifier.NotifyNicknameChangedAsync(userId, normalizedNew);
+                    }
+                }
 
                 _logger.LogInformation("Профиль пользователя {UserId} успешно обновлён", userId);
 

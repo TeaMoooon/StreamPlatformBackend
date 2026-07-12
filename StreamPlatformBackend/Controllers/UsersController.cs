@@ -224,13 +224,16 @@ namespace StreamPlatformBackend.Controllers
                 // Если нужно добавить StreamId или обработать PreviewUrl через метод контроллера
                 var result = streams.Select(s => new OnlineUserListDto
                 {
+                    UserId = s.UserId,
                     Nickname = s.Nickname,
                     ProfileImage = GetMediaUrl(s.ProfileImage),
-                    IsOnline = s.IsOnline, // Можно брать из сервиса, если там есть
+                    IsOnline = s.IsOnline,
                     StreamersLeague = s.StreamersLeague,
-                    PreviewUrl = GetStreamMediaUrl(0, s.StreamId ?? 0, s.PreviewUrl), // userId пока 0, если нужно - передавать через сервис
+                    PreviewUrl = ResolveOnlinePreviewUrl(s),
                     StreamName = s.StreamName,
-                    StreamId = s.StreamId
+                    StreamId = s.StreamId,
+                    TotalViews = s.TotalViews,
+                    ViewerCount = StreamViewerStore.GetViewerCount(s.UserId)
                 }).ToList();
 
                 return Ok(new
@@ -345,6 +348,18 @@ namespace StreamPlatformBackend.Controllers
         {
             if (string.IsNullOrEmpty(filename)) return string.Empty;
             return filename.StartsWith("/") ? filename : $"/media/users/{userId}/streams/{streamId}/{filename}";
+        }
+
+        private string ResolveOnlinePreviewUrl(OnlineUserListDto stream)
+        {
+            if (!string.IsNullOrWhiteSpace(stream.PreviewUrl))
+            {
+                var preview = GetStreamMediaUrl(stream.UserId, stream.StreamId ?? 0, stream.PreviewUrl);
+                if (!string.IsNullOrEmpty(preview))
+                    return preview;
+            }
+
+            return GetMediaUrl(stream.ProfileImage);
         }
 
 

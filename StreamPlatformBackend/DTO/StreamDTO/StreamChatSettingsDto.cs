@@ -37,6 +37,7 @@ namespace StreamPlatformBackend.DTO.StreamDTO
         public List<string> Tags { get; set; } = new();
         public string Language { get; set; } = "ru";
         public string Announcement { get; set; } = string.Empty;
+        public string? PreviewUrl { get; set; }
         public bool IsLive { get; set; }
         public int SubscriberCount { get; set; }
         public DateTime? StartedAt { get; set; }

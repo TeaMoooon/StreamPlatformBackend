@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Http;
 using StreamPlatformBackend.Constants;
 using StreamPlatformBackend.Data;
 using StreamPlatformBackend.DTO.StreamDTO;
@@ -13,6 +14,10 @@ namespace StreamPlatformBackend.Services
             int streamerId,
             int actorUserId,
             UpdateStreamDashboardSettingsDto dto);
+        Task<(bool success, string? error, string? previewUrl)> UploadPreviewAsync(
+            int streamerId,
+            int actorUserId,
+            IFormFile previewImage);
     }
 
     public class StreamDashboardService : IStreamDashboardService
@@ -60,6 +65,7 @@ namespace StreamPlatformBackend.Services
                     Tags = liveStream.Tags.Select(st => st.Tag.Slug).ToList(),
                     Language = user.StreamLanguage,
                     Announcement = user.StreamAnnouncement,
+                    PreviewUrl = liveStream.PreviewUrl ?? user.LastPreviewUrl,
                     IsLive = true,
                     SubscriberCount = subscriberCount,
                     StartedAt = liveStream.StartedAt,
@@ -79,6 +85,7 @@ namespace StreamPlatformBackend.Services
                 Tags = user.LastTags ?? new List<string>(),
                 Language = user.StreamLanguage,
                 Announcement = user.StreamAnnouncement,
+                PreviewUrl = user.LastPreviewUrl,
                 IsLive = false,
                 SubscriberCount = subscriberCount,
                 StartedAt = null,
@@ -164,6 +171,29 @@ namespace StreamPlatformBackend.Services
 
             await _context.SaveChangesAsync();
             return (true, null);
+        }
+
+        public async Task<(bool success, string? error, string? previewUrl)> UploadPreviewAsync(
+            int streamerId,
+            int actorUserId,
+            IFormFile previewImage)
+        {
+            var access = await _streamTeamService.GetAccessAsync(streamerId, actorUserId);
+            if (access == null || !access.CanManageStream)
+                return (false, "Недостаточно прав", null);
+
+            if (previewImage == null || previewImage.Length == 0)
+                return (false, "Файл превью не выбран", null);
+
+            try
+            {
+                var previewUrl = await _settingsService.UploadStreamPreviewForUserAsync(streamerId, previewImage);
+                return (true, null, previewUrl);
+            }
+            catch (ArgumentException ex)
+            {
+                return (false, ex.Message, null);
+            }
         }
     }
 }

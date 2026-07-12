@@ -30,16 +30,19 @@ namespace StreamPlatformBackend.Services
         Task SetBanAsync(int streamerId, int userId, bool banned);
         Task SetBansAsync(int streamerId, IEnumerable<int> userIds);
         Task<bool> IsBannedAsync(int streamerId, int userId);
+        Task UpdateUsernameForUserAsync(int userId, string newUsername);
     }
 
     public class RedisChatService : IRedisChatService
     {
         private readonly IDatabase _db;
         private readonly ISubscriber _subscriber;
+        private readonly IConnectionMultiplexer _redis;
         private const int MaxMessages = 50;
 
         public RedisChatService(IConnectionMultiplexer redis)
         {
+            _redis = redis;
             _db = redis.GetDatabase();
             _subscriber = redis.GetSubscriber();
         }
@@ -267,5 +270,33 @@ namespace StreamPlatformBackend.Services
 
         public async Task<bool> IsBannedAsync(int streamerId, int userId)
             => await _db.SetContainsAsync(GetBansKey(streamerId), userId);
+
+        public async Task UpdateUsernameForUserAsync(int userId, string newUsername)
+        {
+            if (userId <= 0 || string.IsNullOrWhiteSpace(newUsername))
+                return;
+
+            foreach (var endpoint in _redis.GetEndPoints())
+            {
+                var server = _redis.GetServer(endpoint);
+                if (!server.IsConnected)
+                    continue;
+
+                await foreach (var key in server.KeysAsync(pattern: "chat:*:messages"))
+                {
+                    var messages = await _db.ListRangeAsync(key, 0, -1);
+
+                    for (var i = 0; i < messages.Length; i++)
+                    {
+                        var message = JsonSerializer.Deserialize<ChatMessageDto>(messages[i]!);
+                        if (message == null || message.UserId != userId || message.Username == newUsername)
+                            continue;
+
+                        message.Username = newUsername;
+                        await _db.ListSetByIndexAsync(key, i, JsonSerializer.Serialize(message));
+                    }
+                }
+            }
+        }
     }
 }

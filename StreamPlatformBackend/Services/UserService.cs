@@ -31,6 +31,7 @@ namespace StreamPlatformBackend.Services
 
         Task<UserModel> GetUserByNameAsync(string name);
         Task<UserModel> GetUserByIdAsync(int id);
+        Task<Dictionary<int, string>> GetNicknamesByIdsAsync(IEnumerable<int> userIds);
 
         Task<bool> NicknameExistsAsync(string nickname);
         Task<bool> EmailExistsAsync(string email);
@@ -188,9 +189,13 @@ namespace StreamPlatformBackend.Services
             if (pageSize < 1) pageSize = 25;
 
             var query = _context.Users
-                .Where(u => u.CurrentStream != null)
+                .Where(u =>
+                    u.CurrentStream != null &&
+                    u.CurrentStream.StartedAt != null &&
+                    u.CurrentStream.EndedAt == null)
                 .Include(u => u.CurrentStream)
-                .OrderBy(u => u.Nickname)
+                .OrderByDescending(u => u.CurrentStream!.StartedAt)
+                .ThenBy(u => u.Nickname)
                 .AsNoTracking();
 
             int totalCount = await query.CountAsync();
@@ -200,11 +205,15 @@ namespace StreamPlatformBackend.Services
                 .Take(pageSize)
                 .Select(u => new OnlineUserListDto
                 {
+                    UserId = u.Id,
                     Nickname = u.Nickname,
                     ProfileImage = u.ProfileImage,
+                    IsOnline = true,
                     StreamersLeague = u.StreamersLeague,
-                    PreviewUrl = u.CurrentStream.PreviewUrl,
-                    StreamName = u.CurrentStream.StreamName
+                    PreviewUrl = u.CurrentStream!.PreviewUrl,
+                    StreamName = u.CurrentStream!.StreamName,
+                    StreamId = u.CurrentStream!.Id,
+                    TotalViews = u.CurrentStream!.TotalViews
                 })
                 .ToListAsync();
 
@@ -229,7 +238,9 @@ namespace StreamPlatformBackend.Services
                 {
                     Nickname = s.TargetUser.Nickname,
                     ProfileImage = s.TargetUser.ProfileImage,
-                    IsOnline = s.TargetUser.IsOnline,
+                    IsOnline = s.TargetUser.CurrentStream != null
+                        && s.TargetUser.CurrentStream.StartedAt != null
+                        && s.TargetUser.CurrentStream.EndedAt == null,
                     StreamersLeague = s.TargetUser.StreamersLeague,
                     PreviewUrl = s.TargetUser.CurrentStream != null
                         ? s.TargetUser.CurrentStream.PreviewUrl
@@ -237,7 +248,11 @@ namespace StreamPlatformBackend.Services
 
                     StreamName = s.TargetUser.CurrentStream != null
                         ? s.TargetUser.CurrentStream.StreamName
-                        : string.Empty
+                        : string.Empty,
+                    StreamId = s.TargetUser.CurrentStream != null
+                        ? s.TargetUser.CurrentStream.Id
+                        : null,
+                    UserId = s.TargetUser.Id
                 })
                 .AsNoTracking()
                 .ToListAsync();
@@ -386,6 +401,18 @@ namespace StreamPlatformBackend.Services
                 .Include(u => u.SocialLinks)
                 .Include(u => u.CurrentStream)
                 .FirstOrDefaultAsync(u => u.Id == id);
+        }
+
+        public async Task<Dictionary<int, string>> GetNicknamesByIdsAsync(IEnumerable<int> userIds)
+        {
+            var ids = userIds?.Distinct().Where(id => id > 0).ToList() ?? new List<int>();
+            if (ids.Count == 0)
+                return new Dictionary<int, string>();
+
+            return await _context.Users
+                .AsNoTracking()
+                .Where(u => ids.Contains(u.Id))
+                .ToDictionaryAsync(u => u.Id, u => u.Nickname);
         }
 
 

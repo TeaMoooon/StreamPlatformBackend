@@ -1,4 +1,5 @@
-﻿using Microsoft.EntityFrameworkCore;
+﻿using Microsoft.AspNetCore.Http;
+using Microsoft.EntityFrameworkCore;
 using StreamPlatformBackend.Data;
 using StreamPlatformBackend.DTO;
 using StreamPlatformBackend.DTO.StreamDTO;
@@ -18,6 +19,7 @@ namespace StreamPlatformBackend.Services
         
         // Stream settings
         Task<bool> UpdateStreamSettingsAsync(int userId, StreamUpdateDto dto);
+        Task<string> UploadStreamPreviewForUserAsync(int userId, IFormFile file);
         Task<(List<StreamCategoryForSettingsDto> categories, int totalCount)> GetCategoriesAsync(string? search, int page, int pageSize);
 
 
@@ -353,6 +355,28 @@ namespace StreamPlatformBackend.Services
             return true;
         }
 
+        public async Task<string> UploadStreamPreviewForUserAsync(int userId, IFormFile file)
+        {
+            var user = await _context.Users
+                .Include(u => u.CurrentStream)
+                .FirstOrDefaultAsync(u => u.Id == userId)
+                ?? throw new ArgumentException("Пользователь не найден");
+
+            var liveStream = user.CurrentStream is { EndedAt: null } stream ? stream : null;
+            if (liveStream != null)
+            {
+                var url = await UploadStreamPreviewAsync(liveStream, file);
+                user.LastPreviewUrl = url;
+                await _context.SaveChangesAsync();
+                return url;
+            }
+
+            var offlineUrl = await UploadOfflineStreamPreviewAsync(user, file);
+            user.LastPreviewUrl = offlineUrl;
+            await _context.SaveChangesAsync();
+            return offlineUrl;
+        }
+
         public async Task<(List<StreamCategoryForSettingsDto> categories, int totalCount)> GetCategoriesAsync(string? search, int page, int pageSize)
         {
             var query = _context.StreamCategories.AsQueryable();
@@ -466,6 +490,28 @@ namespace StreamPlatformBackend.Services
             stream.PreviewUrl = url;
 
             return url;
+        }
+
+        private async Task<string> UploadOfflineStreamPreviewAsync(UserModel user, IFormFile file)
+        {
+            var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".webp" };
+            var extension = Path.GetExtension(file.FileName).ToLower();
+
+            if (!allowedExtensions.Contains(extension))
+                throw new ArgumentException("Разрешены только JPG, PNG, WEBP");
+
+            string baseMediaPath = _mediaPath ?? "/var/www/streamplatform/media";
+            var folderPath = Path.Combine(baseMediaPath, "users", user.Id.ToString());
+
+            Directory.CreateDirectory(folderPath);
+
+            string fileName = $"stream-preview{extension}";
+            string fullPath = Path.Combine(folderPath, fileName);
+
+            using (var streamFile = new FileStream(fullPath, FileMode.Create))
+                await file.CopyToAsync(streamFile);
+
+            return $"/media/users/{user.Id}/{fileName}";
         }
 
 

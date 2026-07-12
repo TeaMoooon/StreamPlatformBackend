@@ -8,7 +8,7 @@
 | Компонент | Путь / технология |
 |-----------|-------------------|
 | Backend API | `StreamPlatformBackend/` (.NET 8) |
-| Frontend | `stream-platform-frontend/` (React) |
+| Frontend | `/var/www/SystemStream` (React, отдельный репозиторий) |
 | Ingest (текущий) | nginx-rtmp |
 | Ingest (целевой) | SRS или OvenMediaEngine |
 | Transcode | ffmpeg на dedicated worker |

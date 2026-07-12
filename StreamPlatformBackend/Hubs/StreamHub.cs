@@ -18,7 +18,6 @@ namespace StreamPlatformBackend.Hubs
         private readonly ILogger<StreamHub> _logger;
 
         // Потокобезопасные коллекции
-        private static readonly ConcurrentDictionary<int, ConcurrentDictionary<string, byte>> StreamViewers = new();
         private static readonly ConcurrentDictionary<string, (int StreamerId, string ViewerKey, int StreamId)> ConnectionMap = new();
 
         public StreamHub(
@@ -106,13 +105,12 @@ namespace StreamPlatformBackend.Hubs
                 var streamInfo = await _streamService.GetStreamInfoAsync(streamer.Id);
                 int streamId = streamInfo?.StreamId ?? -1;
 
-                var viewers = StreamViewers.GetOrAdd(streamer.Id, _ => new ConcurrentDictionary<string, byte>());
-                viewers[viewerKey] = 0;
+                var viewerCount = StreamViewerStore.RegisterViewer(streamer.Id, viewerKey);
 
                 ConnectionMap[Context.ConnectionId] = (streamer.Id, viewerKey, streamId);
 
                 await Clients.Group($"stream_{streamer.Id}")
-                    .SendAsync("UpdateViewerCount", viewers.Count);
+                    .SendAsync("UpdateViewerCount", viewerCount);
 
                 await Clients.Caller.SendAsync("StreamJoined", streamInfo ?? new StreamInfoDto
                 {
@@ -143,15 +141,12 @@ namespace StreamPlatformBackend.Hubs
             int userId = GetCurrentUserId();
             string viewerKey = GetViewerKey(userId, sessionId);
 
-            if (StreamViewers.TryGetValue(streamer.Id, out var viewers))
-            {
-                viewers.TryRemove(viewerKey, out _);
-            }
+            var viewerCount = StreamViewerStore.UnregisterViewer(streamer.Id, viewerKey);
 
             ConnectionMap.TryRemove(Context.ConnectionId, out _);
 
             await Clients.Group($"stream_{streamer.Id}")
-                .SendAsync("UpdateViewerCount", viewers?.Count ?? 0);
+                .SendAsync("UpdateViewerCount", viewerCount);
 
             _logger.LogInformation("Viewer {ViewerKey} left stream {StreamerId}", viewerKey, streamer.Id);
         }
@@ -164,12 +159,9 @@ namespace StreamPlatformBackend.Hubs
                 return;
             }
 
-            if (StreamViewers.TryGetValue(info.StreamerId, out var viewers))
-            {
-                viewers.TryRemove(info.ViewerKey, out _);
-                await Clients.Group($"stream_{info.StreamerId}")
-                    .SendAsync("UpdateViewerCount", viewers.Count);
-            }
+            var viewerCount = StreamViewerStore.UnregisterViewer(info.StreamerId, info.ViewerKey);
+            await Clients.Group($"stream_{info.StreamerId}")
+                .SendAsync("UpdateViewerCount", viewerCount);
 
             await base.OnDisconnectedAsync(exception);
         }
@@ -209,7 +201,8 @@ namespace StreamPlatformBackend.Hubs
                 }
 
                 int userId = GetCurrentUserId();
-                string username = Context.User.Identity?.Name ?? "Unknown";
+                var sender = await _userService.GetUserByIdAsync(userId);
+                string username = sender?.Nickname ?? Context.User.Identity?.Name ?? "Unknown";
                 int streamerId = info.StreamerId;
 
                 var trimmed = (text ?? string.Empty).Trim();
@@ -658,12 +651,13 @@ namespace StreamPlatformBackend.Hubs
 
             var userId = GetCurrentUserId();
             var messages = await _redisChatService.GetLastMessagesAsync(info.StreamId);
+            var nicknames = await _userService.GetNicknamesByIdsAsync(messages.Select(m => m.UserId));
             var slowModeSeconds = await _redisChatService.GetSlowModeSecondsAsync(info.StreamerId);
             var chatRules = await _redisChatService.GetChatRulesAsync(info.StreamerId);
             var chatMode = await _redisChatService.GetChatModeAsync(info.StreamerId);
             var canManageChat = await CanManageChatAsync(userId, info.StreamerId);
             var canSendChat = await CanSendChatAsync(userId, info.StreamerId, canManageChat, chatMode);
-            var clientMessages = messages.Select(m => MapMessageForClient(m, canManageChat)).ToList();
+            var clientMessages = messages.Select(m => MapMessageForClient(m, canManageChat, nicknames)).ToList();
             var bannedUserIds = canManageChat
                 ? await _streamChatBanService.GetBannedUserIdsAsync(info.StreamerId)
                 : null;
@@ -687,15 +681,22 @@ namespace StreamPlatformBackend.Hubs
             return await _userService.IsSubscribedAsync(userId, streamerId);
         }
 
-        private static object MapMessageForClient(ChatMessageDto message, bool canManageChat)
+        private static object MapMessageForClient(
+            ChatMessageDto message,
+            bool canManageChat,
+            IReadOnlyDictionary<int, string>? nicknames = null)
         {
+            var username = nicknames != null && nicknames.TryGetValue(message.UserId, out var resolved)
+                ? resolved
+                : message.Username;
+
             if (!message.IsDeleted)
             {
                 return new
                 {
                     id = message.Id,
                     userId = message.UserId,
-                    username = message.Username,
+                    username,
                     text = message.Text,
                     role = message.Role,
                     timestamp = message.Timestamp,
@@ -708,7 +709,7 @@ namespace StreamPlatformBackend.Hubs
             {
                 id = message.Id,
                 userId = message.UserId,
-                username = message.Username,
+                username,
                 text = string.Empty,
                 role = message.Role,
                 timestamp = message.Timestamp,
