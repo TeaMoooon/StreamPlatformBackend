@@ -100,7 +100,12 @@
 
 ## Откат
 
-Точка перед началом фазы 0:
+Точки перед фазой 0 (уже на `origin/cursor-edited`):
 
-- Backend `cursor-edited`: commit до фазы 0 (см. историю git перед коммитом phase-0)
-- Frontend `cursor-edited`: включает duration-badge (`Show live stream duration above the player`)
+- Backend: `2382fe1` — до staff foundation
+- Frontend: `6bf4e00` — duration badge (можно откатываться независимо)
+
+Фаза 0 закоммичена: backend `a6b1514`.
+Миграция `Add_StaffAuditLog` применена к БД.
+Чтобы эндпоинты заработали на сервере: `sudo systemctl restart streamplatform-backend`.
+Для проверки `GET /api/staff/me` нужен пользователь с `Role` = `Support|Moderator|Admin|SuperAdmin` и **новый логин** (свежий JWT).
