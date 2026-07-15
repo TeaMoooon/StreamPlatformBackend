@@ -1,6 +1,7 @@
 using Azure;
 using Microsoft.EntityFrameworkCore;
 using StreamPlatformBackend.Models;
+using StreamPlatformBackend.Models.Staff;
 using StreamPlatformBackend.Models.Stream;
 using StreamPlatformBackend.Models.User;
 
@@ -21,6 +22,7 @@ namespace StreamPlatformBackend.Data
         public DbSet<StreamModerator> StreamModerators { get; set; }
         public DbSet<StreamChatBan> StreamChatBans { get; set; }
         public DbSet<StreamChatModerationLog> StreamChatModerationLogs { get; set; }
+        public DbSet<StaffAuditLog> StaffAuditLogs { get; set; }
         public DbSet<TagModel> Tags { get; set; }
         public DbSet<StreamTagModel> StreamTags { get; set; }
 
@@ -131,6 +133,24 @@ namespace StreamPlatformBackend.Data
 
             modelBuilder.Entity<StreamChatModerationLog>()
                 .HasIndex(l => new { l.StreamerId, l.CreatedAt });
+
+            modelBuilder.Entity<StaffAuditLog>()
+                .HasOne(l => l.Actor)
+                .WithMany()
+                .HasForeignKey(l => l.ActorUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<StaffAuditLog>()
+                .HasOne(l => l.TargetUser)
+                .WithMany()
+                .HasForeignKey(l => l.TargetUserId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            modelBuilder.Entity<StaffAuditLog>()
+                .HasIndex(l => l.CreatedAt);
+
+            modelBuilder.Entity<StaffAuditLog>()
+                .HasIndex(l => new { l.ActorUserId, l.CreatedAt });
 
             modelBuilder.Entity<StreamTagModel>()
                 .HasKey(st => new { st.StreamId, st.TagId });

@@ -6,6 +6,7 @@ using Microsoft.OpenApi.Models;
 using StackExchange.Redis;
 using StreamPlatformBackend.Data;
 using StreamPlatformBackend.Hubs;
+using StreamPlatformBackend.Models.Enums;
 using StreamPlatformBackend.Services;
 using StreamPlatformBackend.Services.NotificationService;
 using System.Text;
@@ -83,6 +84,7 @@ builder.Services.AddScoped<IStreamTeamService, StreamTeamService>();
 builder.Services.AddScoped<IStreamChatModerationLogService, StreamChatModerationLogService>();
 builder.Services.AddScoped<IStreamDashboardService, StreamDashboardService>();
 builder.Services.AddScoped<ICategoryBannerSeedService, CategoryBannerSeedService>();
+builder.Services.AddScoped<IStaffAuditService, StaffAuditService>();
 builder.Services.AddHostedService<CategoryBannerSeedHostedService>();
 
 
@@ -131,6 +133,18 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             }
         };
     });
+
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("StaffOnly", policy =>
+        policy.RequireRole(UserRole.StaffRoles));
+
+    options.AddPolicy("StaffModerator", policy =>
+        policy.RequireRole(UserRole.PlatformModeratorRoles));
+
+    options.AddPolicy("StaffAdmin", policy =>
+        policy.RequireRole(UserRole.AdminRoles));
+});
 
 builder.WebHost.ConfigureKestrel(options =>
 {

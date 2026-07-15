@@ -28,12 +28,16 @@ namespace StreamPlatformBackend.Services
         {
             if (user == null) throw new ArgumentNullException(nameof(user));
 
+            var role = string.IsNullOrWhiteSpace(user.Role) ? "User" : user.Role;
             var claims = new[]
             {
                 new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
                 new Claim(ClaimTypes.Email, user.Email),
                 new Claim(ClaimTypes.Name, user.Nickname),
-                new Claim("Role", user.Role.ToString())
+                // Primary role claim used by IsInRole / [Authorize(Roles=...)]
+                new Claim(ClaimTypes.Role, role),
+                // Backward-compatible custom claim for older clients
+                new Claim("Role", role)
             };
 
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_secretKey));

@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.SignalR;
 using StreamPlatformBackend.Constants;
 using StreamPlatformBackend.DTO.StreamDTO;
 using StreamPlatformBackend.Helpers;
+using StreamPlatformBackend.Models.Enums;
 using StreamPlatformBackend.Services;
 using System.Collections.Concurrent;
 using System.Security.Claims;
@@ -48,7 +49,7 @@ namespace StreamPlatformBackend.Hubs
             if (userId == streamerId) return true;
             if (await _streamChatBanService.IsBannedAsync(streamerId, userId))
                 return false;
-            if (Context.User?.IsInRole("Admin") == true || Context.User?.IsInRole("SuperAdmin") == true)
+            if (Context.User?.IsInRole(UserRole.Admin) == true || Context.User?.IsInRole(UserRole.SuperAdmin) == true)
                 return true;
             return await _redisChatService.IsChatManagerAsync(streamerId, userId);
         }
@@ -58,7 +59,7 @@ namespace StreamPlatformBackend.Hubs
             if (userId == streamerId) return "Streamer";
             if (await _redisChatService.IsModeratorAsync(streamerId, userId)) return "Moderator";
             if (await _redisChatService.IsAssistantAsync(streamerId, userId)) return "Assistant";
-            if (Context.User?.IsInRole("Admin") == true || Context.User?.IsInRole("SuperAdmin") == true)
+            if (Context.User?.IsInRole(UserRole.Admin) == true || Context.User?.IsInRole(UserRole.SuperAdmin) == true)
                 return "Admin";
             return "User";
         }
@@ -222,7 +223,7 @@ namespace StreamPlatformBackend.Hubs
                 if (userId == streamerId) role = "Streamer";
                 else if (await _redisChatService.IsModeratorAsync(streamerId, userId)) role = "Moderator";
                 else if (await _redisChatService.IsAssistantAsync(streamerId, userId)) role = "Assistant";
-                else if (Context.User.IsInRole("Admin") || Context.User.IsInRole("SuperAdmin"))
+                else if (Context.User.IsInRole(UserRole.Admin) || Context.User.IsInRole(UserRole.SuperAdmin))
                     role = "Admin";
 
                 var bypassSlowMode = role is "Streamer" or "Moderator" or "Assistant" or "Admin";
