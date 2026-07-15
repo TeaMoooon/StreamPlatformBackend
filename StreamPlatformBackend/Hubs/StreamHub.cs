@@ -16,6 +16,7 @@ namespace StreamPlatformBackend.Hubs
         private readonly IRedisChatService _redisChatService;
         private readonly IStreamChatBanService _streamChatBanService;
         private readonly IStreamChatModerationLogService _moderationLogService;
+        private readonly IPlatformSanctionService _platformSanctions;
         private readonly ILogger<StreamHub> _logger;
 
         // Потокобезопасные коллекции
@@ -27,6 +28,7 @@ namespace StreamPlatformBackend.Hubs
             IRedisChatService redisChatService,
             IStreamChatBanService streamChatBanService,
             IStreamChatModerationLogService moderationLogService,
+            IPlatformSanctionService platformSanctions,
             ILogger<StreamHub> logger)
         {
             _streamService = streamService;
@@ -34,6 +36,7 @@ namespace StreamPlatformBackend.Hubs
             _redisChatService = redisChatService;
             _streamChatBanService = streamChatBanService;
             _moderationLogService = moderationLogService;
+            _platformSanctions = platformSanctions;
             _logger = logger;
         }
 
@@ -228,6 +231,13 @@ namespace StreamPlatformBackend.Hubs
 
                 var bypassSlowMode = role is "Streamer" or "Moderator" or "Assistant" or "Admin";
                 var bypassChatMode = bypassSlowMode;
+
+                if (await _platformSanctions.BlocksChatAsync(userId))
+                {
+                    await Clients.Caller.SendAsync("Error", "PlatformChatMuted");
+                    return;
+                }
+
                 if (await _streamChatBanService.IsBannedAsync(streamerId, userId))
                 {
                     await Clients.Caller.SendAsync("Error", "ChatBanned");

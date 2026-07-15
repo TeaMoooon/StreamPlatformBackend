@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using StreamPlatformBackend.Constants;
 using StreamPlatformBackend.DTO;
 using StreamPlatformBackend.DTO.StreamDTO;
 using StreamPlatformBackend.DTO.UserDTO;
@@ -17,14 +18,21 @@ namespace StreamPlatformBackend.Controllers
         private readonly ILogger<UsersController> _logger;
         private readonly IJwtService _jwtService;
         private readonly IStreamService _streamService;
+        private readonly IPlatformSanctionService _platformSanctions;
 
 
-        public UsersController(IUserService userService, IStreamService streamService, IJwtService jwtService, ILogger<UsersController> logger)
+        public UsersController(
+            IUserService userService,
+            IStreamService streamService,
+            IJwtService jwtService,
+            IPlatformSanctionService platformSanctions,
+            ILogger<UsersController> logger)
         {
             _userService = userService;
             _jwtService = jwtService;
             _logger = logger;
             _streamService = streamService;
+            _platformSanctions = platformSanctions;
         }
 
         /// <summary>
@@ -75,6 +83,19 @@ namespace StreamPlatformBackend.Controllers
 
             if (user == null)
                 return Unauthorized(new { message = "Invalid login/email or password" });
+
+            if (await _platformSanctions.BlocksLoginAsync(user.Id))
+            {
+                var message = await _platformSanctions.GetBlockMessageAsync(
+                    user.Id,
+                    PlatformSanctionTypes.LoginBan,
+                    PlatformSanctionTypes.FullBan);
+
+                return StatusCode(StatusCodes.Status403Forbidden, new
+                {
+                    message = message ?? "Аккаунт заблокирован"
+                });
+            }
 
             var token = _jwtService.GenerateToken(user);
 

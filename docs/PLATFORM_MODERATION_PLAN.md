@@ -41,11 +41,21 @@
 
 ## Фаза 1 — санкции платформы
 
-- [ ] Модель `PlatformSanction` (warning / chat_mute / stream_ban / login_ban / full_ban)
-- [ ] Enforcement: логин, start stream, чат везде
-- [ ] Staff API выдать/снять санкцию + audit
+- [x] Модель `PlatformSanction` (warning / chat_mute / stream_ban / login_ban / full_ban)
+- [x] Enforcement: логин, start stream, чат везде
+- [x] Staff API выдать/снять санкцию + audit
 
 **Критерий:** ручной mute/ban реально блокирует действие.
+
+API (Moderator+):
+
+- `GET /api/staff/sanctions` — активные
+- `GET /api/staff/sanctions/user/{userId}`
+- `POST /api/staff/sanctions` — body: `{ targetUserId, type, reason, durationMinutes? }`
+- `POST /api/staff/sanctions/{id}/revoke` — body: `{ reason? }`
+
+Типы: `warning`, `chat_mute`, `stream_ban`, `login_ban`, `full_ban`.  
+`durationMinutes` null/0 = бессрочно.
 
 ---
 

@@ -23,6 +23,7 @@ namespace StreamPlatformBackend.Data
         public DbSet<StreamChatBan> StreamChatBans { get; set; }
         public DbSet<StreamChatModerationLog> StreamChatModerationLogs { get; set; }
         public DbSet<StaffAuditLog> StaffAuditLogs { get; set; }
+        public DbSet<PlatformSanction> PlatformSanctions { get; set; }
         public DbSet<TagModel> Tags { get; set; }
         public DbSet<StreamTagModel> StreamTags { get; set; }
 
@@ -151,6 +152,30 @@ namespace StreamPlatformBackend.Data
 
             modelBuilder.Entity<StaffAuditLog>()
                 .HasIndex(l => new { l.ActorUserId, l.CreatedAt });
+
+            modelBuilder.Entity<PlatformSanction>()
+                .HasOne(s => s.TargetUser)
+                .WithMany()
+                .HasForeignKey(s => s.TargetUserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<PlatformSanction>()
+                .HasOne(s => s.IssuedByUser)
+                .WithMany()
+                .HasForeignKey(s => s.IssuedByUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<PlatformSanction>()
+                .HasOne(s => s.RevokedByUser)
+                .WithMany()
+                .HasForeignKey(s => s.RevokedByUserId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            modelBuilder.Entity<PlatformSanction>()
+                .HasIndex(s => new { s.TargetUserId, s.Status });
+
+            modelBuilder.Entity<PlatformSanction>()
+                .HasIndex(s => s.CreatedAt);
 
             modelBuilder.Entity<StreamTagModel>()
                 .HasKey(st => new { st.StreamId, st.TagId });

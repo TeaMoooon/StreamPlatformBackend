@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using StreamPlatformBackend.Constants;
 using StreamPlatformBackend.Data;
 using StreamPlatformBackend.DTO.StreamDTO;
 using StreamPlatformBackend.Models;
@@ -33,6 +34,7 @@ namespace StreamPlatformBackend.Services
         private readonly INotificationSender _notificationSender;
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly IStreamLiveNotifier _streamLiveNotifier;
+        private readonly IPlatformSanctionService _platformSanctions;
 
         private readonly TimeSpan ReconnectWindow = TimeSpan.FromSeconds(30);
         private readonly string RecordsBase = "/var/www/streamplatform/records/";
@@ -44,7 +46,8 @@ namespace StreamPlatformBackend.Services
                             INotificationSender notificationSender, 
                             ILogger<StreamService> logger,
                             IServiceScopeFactory scopeFactory,
-                            IStreamLiveNotifier streamLiveNotifier
+                            IStreamLiveNotifier streamLiveNotifier,
+                            IPlatformSanctionService platformSanctions
                             )
         {
             _context = context;
@@ -53,6 +56,7 @@ namespace StreamPlatformBackend.Services
             _logger = logger;
             _scopeFactory = scopeFactory;
             _streamLiveNotifier = streamLiveNotifier;
+            _platformSanctions = platformSanctions;
         }
 
         public async Task<StreamModel?> GetActiveStreamForUserAsync(int userId)
@@ -76,6 +80,15 @@ namespace StreamPlatformBackend.Services
 
             if (user.StreamKey != streamKey)
                 throw new UnauthorizedAccessException("Stream key mismatch");
+
+            if (await _platformSanctions.BlocksStreamingAsync(userId))
+            {
+                var message = await _platformSanctions.GetBlockMessageAsync(
+                    userId,
+                    PlatformSanctionTypes.StreamBan,
+                    PlatformSanctionTypes.FullBan);
+                throw new UnauthorizedAccessException(message ?? "Streaming is blocked by platform sanction");
+            }
 
 
             // --- 1. Если есть активный стрим — обновляем пинг ---
@@ -511,7 +524,10 @@ namespace StreamPlatformBackend.Services
         public async Task<bool> ValidateStreamKeyAsync(string streamKey)
         {
             if (!TryParseUserIdFromStreamKey(streamKey, out int userId)) return false;
-            return await _context.Users.AnyAsync(u => u.Id == userId && u.StreamKey == streamKey);
+            var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId && u.StreamKey == streamKey);
+            if (user == null) return false;
+            if (await _platformSanctions.BlocksStreamingAsync(userId)) return false;
+            return true;
         }
 
         public async Task<bool> IsUserStreamingAsync(int userId)

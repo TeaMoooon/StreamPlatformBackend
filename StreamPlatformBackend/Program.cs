@@ -85,6 +85,7 @@ builder.Services.AddScoped<IStreamChatModerationLogService, StreamChatModeration
 builder.Services.AddScoped<IStreamDashboardService, StreamDashboardService>();
 builder.Services.AddScoped<ICategoryBannerSeedService, CategoryBannerSeedService>();
 builder.Services.AddScoped<IStaffAuditService, StaffAuditService>();
+builder.Services.AddScoped<IPlatformSanctionService, PlatformSanctionService>();
 builder.Services.AddHostedService<CategoryBannerSeedHostedService>();
 
 
