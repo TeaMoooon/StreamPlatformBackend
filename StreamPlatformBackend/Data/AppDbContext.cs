@@ -24,6 +24,7 @@ namespace StreamPlatformBackend.Data
         public DbSet<StreamChatModerationLog> StreamChatModerationLogs { get; set; }
         public DbSet<StaffAuditLog> StaffAuditLogs { get; set; }
         public DbSet<PlatformSanction> PlatformSanctions { get; set; }
+        public DbSet<PlatformReport> PlatformReports { get; set; }
         public DbSet<TagModel> Tags { get; set; }
         public DbSet<StreamTagModel> StreamTags { get; set; }
 
@@ -176,6 +177,45 @@ namespace StreamPlatformBackend.Data
 
             modelBuilder.Entity<PlatformSanction>()
                 .HasIndex(s => s.CreatedAt);
+
+            modelBuilder.Entity<PlatformReport>()
+                .HasOne(r => r.Reporter)
+                .WithMany()
+                .HasForeignKey(r => r.ReporterUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<PlatformReport>()
+                .HasOne(r => r.TargetUser)
+                .WithMany()
+                .HasForeignKey(r => r.TargetUserId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            modelBuilder.Entity<PlatformReport>()
+                .HasOne(r => r.Streamer)
+                .WithMany()
+                .HasForeignKey(r => r.StreamerId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            modelBuilder.Entity<PlatformReport>()
+                .HasOne(r => r.Assignee)
+                .WithMany()
+                .HasForeignKey(r => r.AssigneeUserId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            modelBuilder.Entity<PlatformReport>()
+                .HasOne(r => r.LinkedSanction)
+                .WithMany()
+                .HasForeignKey(r => r.LinkedSanctionId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            modelBuilder.Entity<PlatformReport>()
+                .HasIndex(r => new { r.Status, r.CreatedAt });
+
+            modelBuilder.Entity<PlatformReport>()
+                .HasIndex(r => new { r.ReporterUserId, r.CreatedAt });
+
+            modelBuilder.Entity<PlatformReport>()
+                .HasIndex(r => new { r.TargetUserId, r.CreatedAt });
 
             modelBuilder.Entity<StreamTagModel>()
                 .HasKey(st => new { st.StreamId, st.TagId });

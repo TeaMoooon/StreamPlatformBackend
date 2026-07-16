@@ -61,12 +61,24 @@ API (Moderator+):
 
 ## Фаза 2 — репорты (T&S)
 
-- [ ] Модель `Report` + статусы + assignee
-- [ ] Кнопки жалобы: чат / канал
-- [ ] Staff UI `/staff/reports`
-- [ ] Антиспам репортов
+- [x] Модель `Report` + статусы + assignee
+- [x] Кнопки жалобы: чат / канал
+- [x] Staff UI `/staff/reports`
+- [x] Антиспам репортов
 
 **Критерий:** жалоба → очередь → mute → нарушитель не пишет.
+
+API:
+
+- `POST /api/reports` — любой авторизованный
+- `GET /api/staff/reports?status=` — Moderator+
+- `PUT /api/staff/reports/{id}` — статус / резолюция / опциональная санкция
+
+UI:
+
+- чат: «Пожаловаться» в меню сообщения
+- канал: кнопка на баннере
+- `/staff/reports` + пункт Staff в меню аватара
 
 ---
 

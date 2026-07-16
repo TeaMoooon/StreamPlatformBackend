@@ -86,6 +86,7 @@ builder.Services.AddScoped<IStreamDashboardService, StreamDashboardService>();
 builder.Services.AddScoped<ICategoryBannerSeedService, CategoryBannerSeedService>();
 builder.Services.AddScoped<IStaffAuditService, StaffAuditService>();
 builder.Services.AddScoped<IPlatformSanctionService, PlatformSanctionService>();
+builder.Services.AddScoped<IPlatformReportService, PlatformReportService>();
 builder.Services.AddHostedService<CategoryBannerSeedHostedService>();
 
 
