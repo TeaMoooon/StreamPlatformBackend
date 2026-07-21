@@ -1,0 +1,9 @@
+# Install:
+#   sudo cp scripts/streamplatform-kill-hls-transcoder.sh /usr/local/bin/streamplatform-kill-hls-transcoder
+#   sudo chmod 755 /usr/local/bin/streamplatform-kill-hls-transcoder
+#   sudo cp scripts/sudoers-streamplatform-kill-hls /etc/sudoers.d/streamplatform-kill-hls
+#   sudo chmod 440 /etc/sudoers.d/streamplatform-kill-hls
+#
+# Fallback if CAP_KILL is not granted to the service.
+
+boxedstream ALL=(root) NOPASSWD: /usr/local/bin/streamplatform-kill-hls-transcoder

@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using StreamPlatformBackend.Constants;
 using StreamPlatformBackend.Data;
 using StreamPlatformBackend.Models.Staff;
 
@@ -14,7 +15,7 @@ namespace StreamPlatformBackend.Services
             string? entityId = null,
             string? details = null);
 
-        Task<List<StaffAuditLog>> GetRecentAsync(int take = 50);
+        Task<List<StaffAuditLog>> GetRecentAsync(int take = 50, bool includeAccess = false);
     }
 
     public class StaffAuditService : IStaffAuditService
@@ -56,13 +57,19 @@ namespace StreamPlatformBackend.Services
                 targetUserId);
         }
 
-        public async Task<List<StaffAuditLog>> GetRecentAsync(int take = 50)
+        public async Task<List<StaffAuditLog>> GetRecentAsync(int take = 50, bool includeAccess = false)
         {
             take = Math.Clamp(take, 1, 200);
-            return await _context.StaffAuditLogs
+            var query = _context.StaffAuditLogs
                 .AsNoTracking()
                 .Include(l => l.Actor)
                 .Include(l => l.TargetUser)
+                .AsQueryable();
+
+            if (!includeAccess)
+                query = query.Where(l => l.Action != StaffAuditActions.StaffAccess);
+
+            return await query
                 .OrderByDescending(l => l.CreatedAt)
                 .Take(take)
                 .ToListAsync();

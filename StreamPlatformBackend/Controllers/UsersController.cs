@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using StreamPlatformBackend.Constants;
 using StreamPlatformBackend.DTO;
@@ -213,7 +213,39 @@ namespace StreamPlatformBackend.Controllers
                 var user = await _userService.GetUserByIdAsync(userId);
                 if (user == null) return NotFound(new { message = "Пользователь не найден" });
 
-                return Ok(new { streamKey = user.StreamKey });
+                var streamingBlocked = await _platformSanctions.BlocksStreamingAsync(userId);
+                string? blockMessage = null;
+                string? blockType = null;
+                string? blockReason = null;
+                DateTime? blockExpiresAt = null;
+                long? blockSanctionId = null;
+
+                if (streamingBlocked)
+                {
+                    var info = await _platformSanctions.GetActiveBlockAsync(
+                        userId,
+                        PlatformSanctionTypes.StreamBan,
+                        PlatformSanctionTypes.FullBan);
+                    if (info != null)
+                    {
+                        blockMessage = info.Message;
+                        blockType = info.Type;
+                        blockReason = info.Reason;
+                        blockExpiresAt = info.ExpiresAt;
+                        blockSanctionId = info.SanctionId;
+                    }
+                }
+
+                return Ok(new
+                {
+                    streamKey = user.StreamKey,
+                    streamingBlocked,
+                    blockMessage,
+                    blockType,
+                    blockReason,
+                    blockExpiresAt,
+                    blockSanctionId
+                });
             }
             catch (UnauthorizedAccessException)
             {

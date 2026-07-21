@@ -85,9 +85,14 @@ builder.Services.AddScoped<IStreamChatModerationLogService, StreamChatModeration
 builder.Services.AddScoped<IStreamDashboardService, StreamDashboardService>();
 builder.Services.AddScoped<ICategoryBannerSeedService, CategoryBannerSeedService>();
 builder.Services.AddScoped<IStaffAuditService, StaffAuditService>();
+builder.Services.AddScoped<IStaffUserService, StaffUserService>();
+builder.Services.AddScoped<IStaffStatsService, StaffStatsService>();
 builder.Services.AddScoped<IPlatformSanctionService, PlatformSanctionService>();
 builder.Services.AddScoped<IPlatformReportService, PlatformReportService>();
+builder.Services.AddScoped<ISupportTicketService, SupportTicketService>();
+builder.Services.AddScoped<IPlatformAppealService, PlatformAppealService>();
 builder.Services.AddHostedService<CategoryBannerSeedHostedService>();
+builder.Services.AddHostedService<SanctionExpireHostedService>();
 
 
 

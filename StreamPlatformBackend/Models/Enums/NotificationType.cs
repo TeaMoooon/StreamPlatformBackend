@@ -1,4 +1,4 @@
-﻿namespace StreamPlatformBackend.Models.Enums
+namespace StreamPlatformBackend.Models.Enums
 {
     public enum NotificationType
     {
@@ -11,6 +11,9 @@
 
         System = 4,
         Warning = 5,
-        Error = 6
+        Error = 6,
+        SupportTicketReply = 7,
+        PlatformSanction = 8,
+        PlatformAppeal = 9
     }
 }

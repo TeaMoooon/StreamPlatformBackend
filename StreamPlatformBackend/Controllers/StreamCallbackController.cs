@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using StreamPlatformBackend.Data;
 using StreamPlatformBackend.Services;
@@ -44,6 +44,18 @@ public class StreamCallbackController : ControllerBase
 
             await _streamService.StartStreamAsync(userId, streamKey);
             return Ok();
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            // nginx-rtmp / OBS не показывают этот текст пользователю — только отклоняют publish.
+            // Текст остаётся в логах и теле ответа для отладки.
+            _logger.LogWarning("Stream start denied: {Message}", ex.Message);
+            return StatusCode(StatusCodes.Status403Forbidden, ex.Message);
+        }
+        catch (ArgumentException ex)
+        {
+            _logger.LogWarning(ex, "Stream start bad request");
+            return BadRequest(ex.Message);
         }
         catch (Exception ex)
         {

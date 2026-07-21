@@ -9,5 +9,7 @@ namespace StreamPlatformBackend.Constants
         public const string TicketReplied = "ticket_replied";
         public const string StreamKeyReset = "stream_key_reset";
         public const string ReportResolved = "report_resolved";
+        public const string AppealCreated = "appeal_created";
+        public const string AppealReviewed = "appeal_reviewed";
     }
 }

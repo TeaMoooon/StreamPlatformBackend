@@ -25,6 +25,9 @@ namespace StreamPlatformBackend.Data
         public DbSet<StaffAuditLog> StaffAuditLogs { get; set; }
         public DbSet<PlatformSanction> PlatformSanctions { get; set; }
         public DbSet<PlatformReport> PlatformReports { get; set; }
+        public DbSet<SupportTicket> SupportTickets { get; set; }
+        public DbSet<SupportTicketMessage> SupportTicketMessages { get; set; }
+        public DbSet<PlatformAppeal> PlatformAppeals { get; set; }
         public DbSet<TagModel> Tags { get; set; }
         public DbSet<StreamTagModel> StreamTags { get; set; }
 
@@ -216,6 +219,72 @@ namespace StreamPlatformBackend.Data
 
             modelBuilder.Entity<PlatformReport>()
                 .HasIndex(r => new { r.TargetUserId, r.CreatedAt });
+
+            modelBuilder.Entity<SupportTicket>()
+                .HasOne(t => t.User)
+                .WithMany()
+                .HasForeignKey(t => t.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<SupportTicket>()
+                .HasOne(t => t.Assignee)
+                .WithMany()
+                .HasForeignKey(t => t.AssigneeUserId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            modelBuilder.Entity<SupportTicket>()
+                .HasOne(t => t.EscalatedReport)
+                .WithMany()
+                .HasForeignKey(t => t.EscalatedReportId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            modelBuilder.Entity<SupportTicket>()
+                .HasIndex(t => new { t.Status, t.UpdatedAt });
+
+            modelBuilder.Entity<SupportTicket>()
+                .HasIndex(t => new { t.UserId, t.CreatedAt });
+
+            modelBuilder.Entity<SupportTicketMessage>()
+                .HasOne(m => m.Ticket)
+                .WithMany(t => t.Messages)
+                .HasForeignKey(m => m.TicketId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<SupportTicketMessage>()
+                .HasOne(m => m.Author)
+                .WithMany()
+                .HasForeignKey(m => m.AuthorUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<SupportTicketMessage>()
+                .HasIndex(m => new { m.TicketId, m.CreatedAt });
+
+            modelBuilder.Entity<PlatformAppeal>()
+                .HasOne(a => a.Sanction)
+                .WithMany()
+                .HasForeignKey(a => a.SanctionId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<PlatformAppeal>()
+                .HasOne(a => a.User)
+                .WithMany()
+                .HasForeignKey(a => a.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<PlatformAppeal>()
+                .HasOne(a => a.ReviewedByUser)
+                .WithMany()
+                .HasForeignKey(a => a.ReviewedByUserId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            modelBuilder.Entity<PlatformAppeal>()
+                .HasIndex(a => new { a.Status, a.CreatedAt });
+
+            modelBuilder.Entity<PlatformAppeal>()
+                .HasIndex(a => new { a.UserId, a.CreatedAt });
+
+            modelBuilder.Entity<PlatformAppeal>()
+                .HasIndex(a => a.SanctionId);
 
             modelBuilder.Entity<StreamTagModel>()
                 .HasKey(st => new { st.StreamId, st.TagId });

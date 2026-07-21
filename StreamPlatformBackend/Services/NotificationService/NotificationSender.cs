@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.SignalR;
+using Microsoft.AspNetCore.SignalR;
 using StreamPlatformBackend.Hubs;
 using StreamPlatformBackend.Models;
 using StreamPlatformBackend.Models.Enums;
@@ -33,8 +33,11 @@ namespace StreamPlatformBackend.Services.NotificationService
             await _hub.Clients.Group($"user_{notification.UserId}")
                 .SendAsync("ReceiveNotification", new
                 {
-                    Type = notification.Type.ToString().ToLower(),
+                    Id = notification.Id,
+                    Type = notification.Type.ToString(),
                     Payload = notification.PayloadJson,
+                    IsRead = notification.IsRead,
+                    CreatedAt = notification.CreatedAt,
                     Date = notification.CreatedAt
                 });
         }

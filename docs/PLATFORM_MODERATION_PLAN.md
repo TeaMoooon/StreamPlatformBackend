@@ -84,30 +84,59 @@ UI:
 
 ## Фаза 3 — саппорт-тикеты
 
-- [ ] `Ticket` + `TicketMessage`
-- [ ] Категории + эскалация abuse → Report
-- [ ] UI пользователя «Написать в поддержку»
-- [ ] Staff UI `/staff/tickets`
-- [ ] Support без права банить
+- [x] `Ticket` + `TicketMessage`
+- [x] Категории; эскалация в Report только вручную staff (не авто из abuse)
+- [x] UI пользователя «Написать в поддержку»
+- [x] Staff UI `/staff/tickets`
+- [x] Support без права банить
 
 **Критерий:** тикет про ключ → Support сбрасывает ключ с аудитом.
+
+API:
+
+- `GET/POST /api/support/tickets` (+ `POST .../{id}/messages`) — пользователь
+- `GET/PUT /api/staff/tickets` (+ messages, `POST .../{id}/reset-stream-key`) — StaffOnly
+
+UI:
+
+- Настройки → Поддержка
+- `/staff/tickets` (Support видит только тикеты; T&S — ещё жалобы)
+
+Исправление фазы 2: вход в `/staff` по `canAccessStaffPanel`, а не только `canModeratePlatform`.
 
 ---
 
 ## Фаза 4 — staff-панель
 
-- [ ] Оболочка `/staff` (reports / tickets / user search / audit)
-- [ ] Назначение ролей (Admin)
-- [ ] Фильтры и подсветка «протухших» заявок
+- [x] Оболочка `/staff` (reports / tickets / user search / audit)
+- [x] Назначение ролей (Admin)
+- [x] Фильтры и подсветка «протухших» заявок (>24ч)
+
+API:
+
+- `GET /api/staff/users?q=` — поиск (ник / email / id)
+- `GET /api/staff/users/{id}` — карточка + активные санкции
+- `PUT /api/staff/users/{id}/role` — Admin+ (`{ role }`)
+- `GET /api/staff/audit` — журнал (все staff; `staff_access` скрыт)
+
+UI: `/staff/users`, `/staff/audit`; просроченные жалобы/тикеты с меткой «Просрочено».
 
 ---
 
 ## Фаза 5 — апелляции и полировка
 
-- [ ] Апелляции только для platform-санкций
-- [ ] Автоистечение temporary sanctions
-- [ ] Уведомления пользователю
-- [ ] Базовая статистика очередей
+- [x] Апелляции только для platform-санкций
+- [x] Автоистечение temporary sanctions (фон каждые 5 мин + при проверках)
+- [x] Уведомления пользователю (выдача / снятие / истечение / решение апелляции)
+- [x] Базовая статистика очередей (`GET /api/staff/stats` + полоска в `/staff`)
+
+API:
+
+- `GET /api/me/sanctions`, `GET/POST /api/me/appeals` — пользователь
+- `GET/PUT /api/staff/appeals` — Moderator+
+- `GET /api/staff/stats` — все staff
+
+UI: Настройки → Апелляции; `/staff/appeals`.
 
 ---
 

@@ -17,6 +17,11 @@ namespace StreamPlatformBackend.Services
     {
         Task<StreamModel> StartStreamAsync(int userId, string streamKey);
         Task<bool> EndStreamAsync(int userId, string streamKey);
+        /// <summary>
+        /// Immediately ends an active stream (no reconnect window), stops HLS transcoder and notifies viewers offline.
+        /// Used when a stream_ban / full_ban is issued mid-broadcast.
+        /// </summary>
+        Task<bool> ForceTerminateActiveStreamAsync(int userId, string? reason = null);
         Task<StreamInfoDto?> GetStreamInfoAsync(int userId);
         Task<bool> ValidateStreamKeyAsync(string streamKey);
         Task<bool> IsUserStreamingAsync(int userId);
@@ -213,6 +218,87 @@ namespace StreamPlatformBackend.Services
             await _context.SaveChangesAsync();
         }
 
+        public async Task<bool> ForceTerminateActiveStreamAsync(int userId, string? reason = null)
+        {
+            var user = await _context.Users
+                .Include(u => u.CurrentStream)!
+                    .ThenInclude(s => s!.Tags)
+                    .ThenInclude(t => t.Tag)
+                .FirstOrDefaultAsync(u => u.Id == userId);
+
+            if (user == null)
+                return false;
+
+            var streamKey = user.StreamKey;
+            var stream = await _context.Streams
+                .Include(s => s.Tags)
+                    .ThenInclude(t => t.Tag)
+                .Where(s => s.UserId == userId && s.EndedAt == null)
+                .OrderByDescending(s => s.StartedAt)
+                .FirstOrDefaultAsync();
+
+            if (stream == null)
+            {
+                var changed = false;
+                if (user.IsOnline || user.CurrentStream != null)
+                {
+                    user.IsOnline = false;
+                    user.CurrentStream = null;
+                    changed = true;
+                }
+
+                if (!string.IsNullOrWhiteSpace(streamKey))
+                {
+                    TryKillHlsTranscoder(streamKey);
+                    TryCleanHlsOutput(streamKey);
+                }
+
+                if (changed)
+                {
+                    await _context.SaveChangesAsync();
+                    await _streamLiveNotifier.PublishStatusAsync(userId, null);
+                }
+
+                return false;
+            }
+
+            stream.WaitingReconnect = false;
+            stream.EndedAt = DateTime.UtcNow;
+            user.IsOnline = false;
+            user.LastStreamName = stream.StreamName;
+            user.LastTags = stream.Tags.Select(st => st.Tag.Slug).ToList();
+            user.LastCategoryId = stream.CategoryId;
+            user.LastPreviewUrl = stream.PreviewUrl;
+            user.CurrentStream = null;
+            await _context.SaveChangesAsync();
+
+            if (!string.IsNullOrWhiteSpace(streamKey))
+            {
+                TryKillHlsTranscoder(streamKey);
+                TryCleanHlsOutput(streamKey);
+            }
+
+            await _streamLiveNotifier.PublishStatusAsync(userId, null);
+
+            _logger.LogWarning(
+                "Force-terminated stream {StreamId} for user {UserId} ({Reason})",
+                stream.Id, userId, reason ?? "unspecified");
+
+            try
+            {
+                if (stream.RecordEnabled && !string.IsNullOrEmpty(stream.RecordPath) && !string.IsNullOrWhiteSpace(streamKey))
+                {
+                    _ = ProcessRecordingAsync(streamKey, stream.RecordPath, stream.Id);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to process recording after force-terminate for stream {Id}", stream.Id);
+            }
+
+            return true;
+        }
+
         public async Task<bool> EndStreamAsync(int userId, string streamKey)
         {
             var user = await _context.Users
@@ -229,6 +315,7 @@ namespace StreamPlatformBackend.Services
             {
                 user.IsOnline = false;
                 user.CurrentStream = null;
+                TryKillHlsTranscoder(streamKey);
                 TryCleanHlsOutput(streamKey);
                 await _context.SaveChangesAsync();
                 return true;
@@ -623,6 +710,93 @@ namespace StreamPlatformBackend.Services
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to clean HLS output for {StreamKey}", streamKey);
+            }
+        }
+
+        /// <summary>
+        /// Stops the ffmpeg HLS transcoder for this publish key so viewers lose the playlist immediately.
+        /// OBS may stay connected to nginx-rtmp until it disconnects; a new publish is blocked by sanction checks.
+        /// ffmpeg runs as www-data, so plain pkill from boxedstream often fails — prefer CAP_KILL on the service
+        /// or sudoers helper /usr/local/bin/streamplatform-kill-hls-transcoder.
+        /// </summary>
+        private void TryKillHlsTranscoder(string streamKey)
+        {
+            if (string.IsNullOrWhiteSpace(streamKey))
+                return;
+
+            // Stream keys are generated as live_{id}_{hex} — reject anything unexpected before shelling out.
+            if (!System.Text.RegularExpressions.Regex.IsMatch(streamKey, @"^[A-Za-z0-9_-]+$"))
+            {
+                _logger.LogWarning("Refusing to kill transcoder for unsafe stream key");
+                return;
+            }
+
+            // 1) Passwordless helper (see scripts/sudoers-streamplatform-kill-hls)
+            if (TryRunProcess(
+                    "/usr/bin/sudo",
+                    $"-n /usr/local/bin/streamplatform-kill-hls-transcoder {streamKey}",
+                    out var sudoExit))
+            {
+                if (sudoExit == 0)
+                {
+                    _logger.LogInformation("HLS transcoder killed via sudo helper for {StreamKey}", streamKey);
+                    return;
+                }
+            }
+
+            // 2) Direct pkill (works when backend has CAP_KILL or runs as same user as ffmpeg)
+            if (TryRunProcess("/usr/bin/pkill", $"-f ffmpeg.*{streamKey}", out var pkillExit))
+            {
+                // 0 = matched, 1 = no process
+                if (pkillExit is 0 or 1)
+                {
+                    _logger.LogInformation(
+                        "HLS transcoder pkill for {StreamKey} finished with exit {ExitCode}",
+                        streamKey, pkillExit);
+                    return;
+                }
+
+                _logger.LogWarning(
+                    "pkill could not stop transcoder for {StreamKey} (exit {ExitCode}). " +
+                    "Grant CAP_KILL to streamplatform-backend or install scripts/sudoers-streamplatform-kill-hls",
+                    streamKey, pkillExit);
+                return;
+            }
+
+            _logger.LogWarning("Failed to invoke pkill for HLS transcoder {StreamKey}", streamKey);
+        }
+
+        private static bool TryRunProcess(string fileName, string arguments, out int exitCode)
+        {
+            exitCode = -1;
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = fileName,
+                    Arguments = arguments,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using var process = Process.Start(psi);
+                if (process == null)
+                    return false;
+
+                if (!process.WaitForExit(5000))
+                {
+                    try { process.Kill(entireProcessTree: true); } catch { /* ignore */ }
+                    return false;
+                }
+
+                exitCode = process.ExitCode;
+                return true;
+            }
+            catch
+            {
+                return false;
             }
         }
 

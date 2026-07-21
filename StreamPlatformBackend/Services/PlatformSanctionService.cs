@@ -1,9 +1,13 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using StreamPlatformBackend.Constants;
 using StreamPlatformBackend.Data;
 using StreamPlatformBackend.DTO.StaffDTO;
+using StreamPlatformBackend.Models;
 using StreamPlatformBackend.Models.Enums;
 using StreamPlatformBackend.Models.Staff;
+using StreamPlatformBackend.Services.NotificationService;
+using System.Text.Json;
 
 namespace StreamPlatformBackend.Services
 {
@@ -13,26 +17,46 @@ namespace StreamPlatformBackend.Services
         Task<(PlatformSanctionDto? sanction, string? error)> RevokeAsync(int actorUserId, long sanctionId, string? reason);
         Task<List<PlatformSanctionDto>> GetForUserAsync(int targetUserId, bool activeOnly = true);
         Task<List<PlatformSanctionDto>> GetActiveAsync(int take = 100);
-        Task ExpireOverdueAsync();
+        /// <summary>Marks overdue temporary sanctions as expired. Returns how many were expired.</summary>
+        Task<int> ExpireOverdueAsync();
         Task<bool> BlocksLoginAsync(int userId);
         Task<bool> BlocksStreamingAsync(int userId);
         Task<bool> BlocksChatAsync(int userId);
         Task<string?> GetBlockMessageAsync(int userId, params string[] types);
+        Task<ActiveBlockInfo?> GetActiveBlockAsync(int userId, params string[] types);
+    }
+
+    public sealed class ActiveBlockInfo
+    {
+        public long SanctionId { get; init; }
+        public string Type { get; init; } = string.Empty;
+        public string Reason { get; init; } = string.Empty;
+        public DateTime? ExpiresAt { get; init; }
+        public string Message { get; init; } = string.Empty;
     }
 
     public class PlatformSanctionService : IPlatformSanctionService
     {
         private readonly AppDbContext _context;
         private readonly IStaffAuditService _audit;
+        private readonly INotificationRepository _notifications;
+        private readonly INotificationSender _notificationSender;
+        private readonly IServiceScopeFactory _scopeFactory;
         private readonly ILogger<PlatformSanctionService> _logger;
 
         public PlatformSanctionService(
             AppDbContext context,
             IStaffAuditService audit,
+            INotificationRepository notifications,
+            INotificationSender notificationSender,
+            IServiceScopeFactory scopeFactory,
             ILogger<PlatformSanctionService> logger)
         {
             _context = context;
             _audit = audit;
+            _notifications = notifications;
+            _notificationSender = notificationSender;
+            _scopeFactory = scopeFactory;
             _logger = logger;
         }
 
@@ -92,6 +116,32 @@ namespace StreamPlatformBackend.Services
                 entityId: sanction.Id.ToString(),
                 details: $"{type}: {reason}");
 
+            await NotifyUserAsync(
+                dto.TargetUserId,
+                sanction.Id,
+                type,
+                BuildIssueMessage(type, reason, expiresAt));
+
+            if (type is PlatformSanctionTypes.StreamBan or PlatformSanctionTypes.FullBan)
+            {
+                try
+                {
+                    // Resolve via scope to avoid circular DI with StreamService -> IPlatformSanctionService.
+                    using var scope = _scopeFactory.CreateScope();
+                    var streams = scope.ServiceProvider.GetRequiredService<IStreamService>();
+                    await streams.ForceTerminateActiveStreamAsync(
+                        dto.TargetUserId,
+                        reason: $"sanction:{type}:{sanction.Id}");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(
+                        ex,
+                        "Failed to force-end stream after {Type} for user {TargetUserId}",
+                        type, dto.TargetUserId);
+                }
+            }
+
             _logger.LogWarning(
                 "Platform sanction {SanctionId} ({Type}) issued to user {TargetUserId} by {ActorUserId}",
                 sanction.Id, type, dto.TargetUserId, actorUserId);
@@ -124,6 +174,14 @@ namespace StreamPlatformBackend.Services
                 entityType: "PlatformSanction",
                 entityId: sanction.Id.ToString(),
                 details: sanction.RevokeReason);
+
+            await NotifyUserAsync(
+                sanction.TargetUserId,
+                sanction.Id,
+                sanction.Type,
+                string.IsNullOrWhiteSpace(sanction.RevokeReason)
+                    ? $"С вас сняли наказание ({FriendlyType(sanction.Type)})."
+                    : $"С вас сняли наказание ({FriendlyType(sanction.Type)}): {sanction.RevokeReason}");
 
             return (await MapAsync(sanction.Id), null);
         }
@@ -166,7 +224,7 @@ namespace StreamPlatformBackend.Services
             return items.Select(Map).ToList();
         }
 
-        public async Task ExpireOverdueAsync()
+        public async Task<int> ExpireOverdueAsync()
         {
             var now = DateTime.UtcNow;
             var overdue = await _context.PlatformSanctions
@@ -175,12 +233,48 @@ namespace StreamPlatformBackend.Services
                             && s.ExpiresAt <= now)
                 .ToListAsync();
 
-            if (overdue.Count == 0) return;
+            if (overdue.Count == 0) return 0;
 
             foreach (var s in overdue)
                 s.Status = PlatformSanctionStatuses.Expired;
 
             await _context.SaveChangesAsync();
+
+            foreach (var s in overdue)
+            {
+                try
+                {
+                    await NotifyUserAsync(
+                        s.TargetUserId,
+                        s.Id,
+                        s.Type,
+                        $"Срок наказания ({FriendlyType(s.Type)}) истёк — ограничение снято");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Failed to notify user {UserId} about expired sanction {Id}", s.TargetUserId, s.Id);
+                }
+            }
+
+            return overdue.Count;
+        }
+
+        private static string FriendlyType(string type) => type switch
+        {
+            PlatformSanctionTypes.Warning => "предупреждение",
+            PlatformSanctionTypes.ChatMute => "мут чата",
+            PlatformSanctionTypes.StreamBan => "бан стрима",
+            PlatformSanctionTypes.LoginBan => "бан входа",
+            PlatformSanctionTypes.FullBan => "полный бан",
+            _ => type
+        };
+
+        private static string BuildIssueMessage(string type, string reason, DateTime? expiresAt)
+        {
+            var until = expiresAt.HasValue
+                ? $" Срок: до {expiresAt.Value:dd.MM.yyyy HH:mm} UTC."
+                : " Срок: бессрочно.";
+            return $"Вам выдали наказание: {FriendlyType(type)}. Причина: {reason}.{until} Обжаловать можно в Настройки → Поддержка.";
         }
 
         public Task<bool> BlocksLoginAsync(int userId) =>
@@ -194,6 +288,12 @@ namespace StreamPlatformBackend.Services
 
         public async Task<string?> GetBlockMessageAsync(int userId, params string[] types)
         {
+            var info = await GetActiveBlockAsync(userId, types);
+            return info?.Message;
+        }
+
+        public async Task<ActiveBlockInfo?> GetActiveBlockAsync(int userId, params string[] types)
+        {
             await ExpireOverdueAsync();
 
             var sanction = await _context.PlatformSanctions.AsNoTracking()
@@ -205,11 +305,64 @@ namespace StreamPlatformBackend.Services
 
             if (sanction == null) return null;
 
+            var typeLabel = FriendlyType(sanction.Type);
             var until = sanction.ExpiresAt.HasValue
-                ? $" до {sanction.ExpiresAt.Value:u}"
-                : " (бессрочно)";
+                ? $"Срок: до {sanction.ExpiresAt.Value:dd.MM.yyyy HH:mm} UTC"
+                : "Срок: бессрочно";
 
-            return $"Действие заблокировано санкцией платформы ({sanction.Type}){until}: {sanction.Reason}";
+            var headline = sanction.Type switch
+            {
+                PlatformSanctionTypes.LoginBan => "Вход запрещён",
+                PlatformSanctionTypes.ChatMute => "Чат недоступен",
+                PlatformSanctionTypes.StreamBan => "Трансляция запрещена",
+                PlatformSanctionTypes.FullBan => "Аккаунт заблокирован",
+                _ => $"Ограничение: {typeLabel}"
+            };
+
+            return new ActiveBlockInfo
+            {
+                SanctionId = sanction.Id,
+                Type = sanction.Type,
+                Reason = sanction.Reason,
+                ExpiresAt = sanction.ExpiresAt,
+                Message = $"{headline} ({typeLabel}). {until}. Причина: {sanction.Reason}"
+            };
+        }
+
+        private async Task NotifyUserAsync(int userId, long sanctionId, string type, string message)
+        {
+            var typeLabel = type switch
+            {
+                PlatformSanctionTypes.Warning => "Предупреждение",
+                PlatformSanctionTypes.ChatMute => "Мут чата",
+                PlatformSanctionTypes.StreamBan => "Бан стрима",
+                PlatformSanctionTypes.LoginBan => "Бан входа",
+                PlatformSanctionTypes.FullBan => "Полный бан",
+                _ => "Наказание"
+            };
+
+            var notification = new NotificationModel
+            {
+                UserId = userId,
+                Type = NotificationType.PlatformSanction,
+                PayloadJson = JsonSerializer.Serialize(new
+                {
+                    SanctionId = sanctionId,
+                    Type = type,
+                    Title = typeLabel,
+                    Message = message
+                }),
+                CreatedAt = DateTime.UtcNow
+            };
+            await _notifications.CreateNotificationAsync(notification);
+            try
+            {
+                await _notificationSender.SendToUserAsync(notification);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to push sanction notification to user {UserId}", userId);
+            }
         }
 
         private async Task<bool> HasActiveAsync(int userId, params string[] types)
