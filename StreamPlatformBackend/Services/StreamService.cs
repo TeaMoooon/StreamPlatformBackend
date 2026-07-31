@@ -101,10 +101,12 @@ namespace StreamPlatformBackend.Services
             if (active != null)
             {
                 active.LastPingAt = now;
+                EnsurePlaybackId(active);
                 user.CurrentStream = active;
                 user.IsOnline = true;
 
                 await _context.SaveChangesAsync();
+                TryEnsureHlsPlaybackLink(streamKey, active.PublicId);
                 await NotifyStreamLiveAsync(userId);
                 return active;
             }
@@ -120,11 +122,13 @@ namespace StreamPlatformBackend.Services
             {
                 last.EndedAt = null;
                 last.LastPingAt = now;
+                EnsurePlaybackId(last);
 
                 user.CurrentStream = last;
                 user.IsOnline = true;
 
                 await _context.SaveChangesAsync();
+                TryEnsureHlsPlaybackLink(streamKey, last.PublicId);
                 await NotifyStreamLiveAsync(userId);
                 return last;
             }
@@ -198,7 +202,8 @@ namespace StreamPlatformBackend.Services
                 NotificationType.StreamStarted
             );
 
-            TryCleanHlsOutput(streamKey);
+            TryCleanHlsOutput(streamKey, stream.PublicId);
+            TryEnsureHlsPlaybackLink(streamKey, stream.PublicId);
             await NotifyStreamLiveAsync(userId);
 
             return stream;
@@ -275,7 +280,7 @@ namespace StreamPlatformBackend.Services
             if (!string.IsNullOrWhiteSpace(streamKey))
             {
                 TryKillHlsTranscoder(streamKey);
-                TryCleanHlsOutput(streamKey);
+                TryCleanHlsOutput(streamKey, stream.PublicId);
             }
 
             await _streamLiveNotifier.PublishStatusAsync(userId, null);
@@ -376,7 +381,7 @@ namespace StreamPlatformBackend.Services
                 s.WaitingReconnect = false;
                 await db.SaveChangesAsync();
 
-                TryCleanHlsOutput(streamKey);
+                TryCleanHlsOutput(streamKey, s.PublicId);
 
                 var liveNotifier = scope.ServiceProvider.GetRequiredService<IStreamLiveNotifier>();
                 await liveNotifier.PublishStatusAsync(usr.Id, null);
@@ -605,7 +610,19 @@ namespace StreamPlatformBackend.Services
             var stream = user?.CurrentStream;
             if (stream == null || stream.EndedAt != null) return null;
 
-            return MapStreamInfo(user!, stream);
+            var changed = false;
+            if (string.IsNullOrWhiteSpace(stream.PublicId))
+            {
+                EnsurePlaybackId(stream);
+                changed = true;
+            }
+            if (changed)
+                await _context.SaveChangesAsync();
+
+            if (!string.IsNullOrWhiteSpace(user!.StreamKey))
+                TryEnsureHlsPlaybackLink(user.StreamKey, stream.PublicId);
+
+            return MapStreamInfo(user, stream);
         }
 
         public async Task<bool> ValidateStreamKeyAsync(string streamKey)
@@ -693,24 +710,97 @@ namespace StreamPlatformBackend.Services
             }
         }
 
-        private void TryCleanHlsOutput(string streamKey)
+        /// <summary>
+        /// Public playback path uses PublicId; on-disk ffmpeg output stays under StreamKey.
+        /// Symlink: live/{PublicId} → live/{StreamKey} so viewers never see the publish key.
+        /// </summary>
+        private void TryEnsureHlsPlaybackLink(string streamKey, string? playbackId)
         {
-            if (string.IsNullOrWhiteSpace(streamKey))
+            if (string.IsNullOrWhiteSpace(streamKey) || string.IsNullOrWhiteSpace(playbackId))
+                return;
+            if (!System.Text.RegularExpressions.Regex.IsMatch(streamKey, @"^[A-Za-z0-9_-]+$"))
+                return;
+            if (!System.Text.RegularExpressions.Regex.IsMatch(playbackId, @"^[A-Za-z0-9_-]+$"))
                 return;
 
             try
             {
-                var dir = Path.Combine(HlsLiveBase, streamKey);
-                if (!Directory.Exists(dir))
+                Directory.CreateDirectory(HlsLiveBase);
+                var linkPath = Path.Combine(HlsLiveBase, playbackId);
+                if (Directory.Exists(linkPath) && !IsSymlink(linkPath))
                     return;
+                if (Directory.Exists(linkPath) || File.Exists(linkPath))
+                    Directory.Delete(linkPath);
 
-                Directory.Delete(dir, recursive: true);
-                _logger.LogInformation("Cleaned stale HLS output for {StreamKey}", streamKey);
+                // Relative symlink so rename of live/ root still works
+                Directory.CreateSymbolicLink(linkPath, streamKey);
+                _logger.LogInformation("HLS playback link {PlaybackId} -> {StreamKey}", playbackId, MaskKey(streamKey));
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Failed to clean HLS output for {StreamKey}", streamKey);
+                _logger.LogWarning(ex, "Failed to create HLS playback link for {PlaybackId}", playbackId);
             }
+        }
+
+        private void TryCleanHlsOutput(string streamKey, string? playbackId = null)
+        {
+            if (string.IsNullOrWhiteSpace(streamKey) && string.IsNullOrWhiteSpace(playbackId))
+                return;
+
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(playbackId))
+                {
+                    var linkPath = Path.Combine(HlsLiveBase, playbackId);
+                    if (Directory.Exists(linkPath) || File.Exists(linkPath) || IsSymlink(linkPath))
+                    {
+                        Directory.Delete(linkPath);
+                    }
+                }
+
+                if (!string.IsNullOrWhiteSpace(streamKey))
+                {
+                    var dir = Path.Combine(HlsLiveBase, streamKey);
+                    if (Directory.Exists(dir) && !IsSymlink(dir))
+                    {
+                        Directory.Delete(dir, recursive: true);
+                        _logger.LogInformation("Cleaned stale HLS output for {StreamKey}", MaskKey(streamKey));
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to clean HLS output");
+            }
+        }
+
+        private static void EnsurePlaybackId(StreamModel stream)
+        {
+            if (string.IsNullOrWhiteSpace(stream.PublicId))
+                stream.PublicId = Guid.NewGuid().ToString();
+        }
+
+        private static string GetPlaybackId(StreamModel stream) =>
+            string.IsNullOrWhiteSpace(stream.PublicId) ? stream.Id.ToString() : stream.PublicId;
+
+        private static bool IsSymlink(string path)
+        {
+            try
+            {
+                var info = new FileInfo(path);
+                return info.Attributes.HasFlag(FileAttributes.ReparsePoint);
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        private static string MaskKey(string key)
+        {
+            if (string.IsNullOrEmpty(key) || key.Length < 10)
+                return "***";
+            return key[..8] + "…";
         }
 
         /// <summary>
@@ -814,7 +904,7 @@ namespace StreamPlatformBackend.Services
                 CategoryBannerImageUrl = stream.Category?.BannerImageUrl,
                 StreamLanguage = user.StreamLanguage,
                 PreviewUrl = stream.PreviewUrl,
-                HlsUrl = $"/hls/{user.StreamKey}/master.m3u8?s={stream.Id}",
+                HlsUrl = $"/hls/{GetPlaybackId(stream)}/master.m3u8",
                 TotalViews = stream.TotalViews,
                 StartedAt = stream.StartedAt,
                 EndedAt = stream.EndedAt,
