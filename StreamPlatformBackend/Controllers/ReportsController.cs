@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using StreamPlatformBackend.DTO.StaffDTO;
 using StreamPlatformBackend.Services;
 using System.Security.Claims;
@@ -22,6 +23,7 @@ namespace StreamPlatformBackend.Controllers
         /// Create a platform report (any authenticated user).
         /// </summary>
         [HttpPost]
+        [EnableRateLimiting("sensitive")]
         public async Task<IActionResult> Create([FromBody] CreatePlatformReportDto dto)
         {
             var userId = GetCurrentUserId();

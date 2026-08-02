@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using StreamPlatformBackend.Constants;
 using StreamPlatformBackend.DTO;
 using StreamPlatformBackend.DTO.StreamDTO;
@@ -43,6 +44,7 @@ namespace StreamPlatformBackend.Controllers
         /// <response code="400">Неверные входные данные или email/nickname уже заняты.</response>
         /// <response code="500">Внутренняя ошибка сервера.</response>
         [HttpPost("register")]
+        [EnableRateLimiting("auth")]
         public async Task<IActionResult> Register([FromBody] UserCreateDto dto)
         {
             if (!ModelState.IsValid) return BadRequest(ModelState);
@@ -77,6 +79,7 @@ namespace StreamPlatformBackend.Controllers
         /// <response code="401">Неверный email или пароль.</response>
         /// <response code="500">Внутренняя ошибка сервера.</response>
         [HttpPost("login")]
+        [EnableRateLimiting("auth")]
         public async Task<IActionResult> Login([FromBody] UserLoginDto dto)
         {
             var user = await _userService.LoginAsync(dto.LoginOrEmail, dto.Password);
@@ -205,6 +208,7 @@ namespace StreamPlatformBackend.Controllers
         /// <response code="404">Пользователь не найден.</response>
         [Authorize]
         [HttpGet("stream-key")]
+        [EnableRateLimiting("sensitive")]
         public async Task<IActionResult> GetMyStreamKey()
         {
             try

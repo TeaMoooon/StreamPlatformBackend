@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using StreamPlatformBackend.DTO.StreamDTO;
 using StreamPlatformBackend.DTO.UserDTO;
 using StreamPlatformBackend.Services;
@@ -105,6 +106,7 @@ namespace StreamPlatformBackend.Controllers
         /// <response code="401">Неавторизованный доступ</response>
         /// <response code="500">Ошибка генерации ключа</response>
         [HttpPut("streamkey")]
+        [EnableRateLimiting("sensitive")]
         public async Task<IActionResult> RegenerateStreamKey()
         {
             int userId = int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? throw new UnauthorizedAccessException());
