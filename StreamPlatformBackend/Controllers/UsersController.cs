@@ -148,6 +148,36 @@ namespace StreamPlatformBackend.Controllers
         }
 
         /// <summary>
+        /// Public nickname search for header autocomplete (no email).
+        /// </summary>
+        [HttpGet("search")]
+        [EnableRateLimiting("search")]
+        public async Task<IActionResult> SearchUsers([FromQuery] string q = "", [FromQuery] int take = 8)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(q) || q.Trim().Length < 2)
+                    return Ok(Array.Empty<object>());
+
+                var users = await _userService.SearchUsersPublicAsync(q, take);
+                var result = users.Select(u => new
+                {
+                    u.Id,
+                    u.Nickname,
+                    ProfileImage = GetMediaUrl(u.ProfileImage),
+                    u.IsOnline,
+                    u.StreamName
+                });
+                return Ok(result);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Ошибка публичного поиска пользователей q={Query}", q);
+                return StatusCode(500, new { message = "Внутренняя ошибка сервера" });
+            }
+        }
+
+        /// <summary>
         /// Получить личный профиль текущего авторизованного пользователя.
         /// </summary>
         /// <response code="200">Возвращает личный профиль.</response>
@@ -268,15 +298,18 @@ namespace StreamPlatformBackend.Controllers
         /// <param name="page">Номер страницы (по умолчанию 1)</param>
         /// <param name="pageSize">Количество стримов на страницу (по умолчанию 25)</param>
         [HttpGet("online/streams")]
-        public async Task<IActionResult> GetOnlineStreams(int page = 1, int pageSize = 25)
+        public async Task<IActionResult> GetOnlineStreams(
+            int page = 1,
+            int pageSize = 25,
+            [FromQuery] int? categoryId = null,
+            [FromQuery] string? tag = null)
         {
             try
             {
                 if (page < 1) page = 1;
                 if (pageSize < 1) pageSize = 25;
 
-                // ✅ Получаем сразу DTO из сервиса
-                var (streams, totalCount) = await _userService.GetOnlineStreamersAsync(page, pageSize);
+                var (streams, totalCount) = await _userService.GetOnlineStreamersAsync(page, pageSize, categoryId, tag);
 
                 // Если нужно добавить StreamId или обработать PreviewUrl через метод контроллера
                 var result = streams.Select(s => new OnlineUserListDto
@@ -290,7 +323,9 @@ namespace StreamPlatformBackend.Controllers
                     StreamName = s.StreamName,
                     StreamId = s.StreamId,
                     TotalViews = s.TotalViews,
-                    ViewerCount = StreamViewerStore.GetViewerCount(s.UserId)
+                    ViewerCount = StreamViewerStore.GetViewerCount(s.UserId),
+                    CategoryId = s.CategoryId,
+                    CategoryName = s.CategoryName
                 }).ToList();
 
                 return Ok(new

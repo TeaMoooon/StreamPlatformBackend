@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using StreamPlatformBackend.Data;
 using StreamPlatformBackend.DTO;
@@ -380,15 +380,25 @@ namespace StreamPlatformBackend.Services
         public async Task<(List<StreamCategoryForSettingsDto> categories, int totalCount)> GetCategoriesAsync(string? search, int page, int pageSize)
         {
             var query = _context.StreamCategories.AsQueryable();
+            var searchNorm = string.IsNullOrWhiteSpace(search)
+                ? null
+                : search.Trim().ToLowerInvariant();
 
             // Поиск только по имени
-            if (!string.IsNullOrWhiteSpace(search))
-                query = query.Where(c => c.Name!.ToLower().Contains(search.ToLower()));
+            if (searchNorm != null)
+                query = query.Where(c => c.Name!.ToLower().Contains(searchNorm));
 
             int total = await query.CountAsync();
 
-            var items = await query
-                .OrderBy(c => c.Name)
+            // With search: exact → prefix → substring, then A–Z; without search: A–Z only
+            var ordered = searchNorm != null
+                ? query
+                    .OrderByDescending(c => c.Name!.ToLower() == searchNorm)
+                    .ThenByDescending(c => c.Name!.ToLower().StartsWith(searchNorm))
+                    .ThenBy(c => c.Name)
+                : query.OrderBy(c => c.Name);
+
+            var items = await ordered
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
                 .Select(c => new StreamCategoryForSettingsDto

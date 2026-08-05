@@ -1,0 +1,16 @@
+{
+  "ConnectionStrings": {
+    "DefaultConnection": "Host=localhost;Port=5432;Database=StreamDB;Username=postgres;Password=CHANGE_ME",
+    "Redis": "localhost:6379,abortConnect=false"
+  },
+  "Jwt": {
+    "SecretKey": "CHANGE_ME_TO_A_LONG_RANDOM_SECRET_32PLUS_CHARS",
+    "Issuer": "StreamPlatformBackend",
+    "Audience": "StreamPlatformUsers",
+    "ExpireHours": 24
+  },
+  "Rtmp": {
+    "Secret": "CHANGE_ME_MATCH_NGINX_NOTIFY_SECRET",
+    "PublishUrl": "rtmp://localhost/live"
+  }
+}

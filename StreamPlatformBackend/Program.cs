@@ -15,6 +15,7 @@ using System.Text;
 using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
 
 // Добавляем поддержку JSON и контроллеров
 builder.Services.AddControllers();
@@ -105,7 +106,11 @@ builder.Services.AddStackExchangeRedisCache(options =>
 });
 
 builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
-    ConnectionMultiplexer.Connect(builder.Configuration.GetConnectionString("Redis")));
+{
+    var redis = builder.Configuration.GetConnectionString("Redis")
+        ?? throw new InvalidOperationException("ConnectionStrings:Redis is not configured (set appsettings.Local.json or env)");
+    return ConnectionMultiplexer.Connect(redis);
+});
 
 // Behind nginx: prefer X-Real-IP / X-Forwarded-For for per-client rate limits.
 static string ClientIp(HttpContext httpContext)
@@ -131,6 +136,14 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, cancellationToken) =>
+    {
+        context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+        await context.HttpContext.Response.WriteAsJsonAsync(new
+        {
+            message = "Слишком много запросов. Подождите минуту и попробуйте снова."
+        }, cancellationToken);
+    };
 
     // login / register — anti brute-force
     options.AddPolicy("auth", httpContext =>
@@ -171,7 +184,9 @@ builder.Services.AddRateLimiter(options =>
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
-        var secretKey = builder.Configuration["Jwt:SecretKey"] ?? "fallback-secret-key-minimum-32-chars";
+        var secretKey = builder.Configuration["Jwt:SecretKey"];
+        if (string.IsNullOrWhiteSpace(secretKey) || secretKey.Length < 32)
+            throw new InvalidOperationException("Jwt:SecretKey must be configured in appsettings.Local.json or env (min 32 chars)");
 
         options.TokenValidationParameters = new TokenValidationParameters
         {

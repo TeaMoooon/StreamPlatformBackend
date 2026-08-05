@@ -1,4 +1,4 @@
-﻿using StreamPlatformBackend.DTO.StreamDTO;
+using StreamPlatformBackend.DTO.StreamDTO;
 
 namespace StreamPlatformBackend.DTO.UserDTO
 {
@@ -28,6 +28,10 @@ namespace StreamPlatformBackend.DTO.UserDTO
         public int TotalViews { get; set; }
 
         public int ViewerCount { get; set; }
+
+        public int? CategoryId { get; set; }
+
+        public string? CategoryName { get; set; }
 
 
     }

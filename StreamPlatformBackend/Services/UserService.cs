@@ -20,7 +20,8 @@ namespace StreamPlatformBackend.Services
 
         Task<bool> ValidateUserCredentialsAsync(string email, string password);
 
-        Task<(List<OnlineUserListDto> Streams, int TotalCount)> GetOnlineStreamersAsync(int page, int pageSize);
+        Task<(List<OnlineUserListDto> Streams, int TotalCount)> GetOnlineStreamersAsync(
+            int page, int pageSize, int? categoryId = null, string? tag = null);
         Task<int> GetOnlineUsersCountAsync();
         Task<IEnumerable<OnlineUserListDto>> GetUserSubscriptionsAsync(int userId);
         Task<bool> SubscribeToUserAsync(int subscriberId, int targetUserId);
@@ -32,6 +33,7 @@ namespace StreamPlatformBackend.Services
         Task<UserModel> GetUserByNameAsync(string name);
         Task<UserModel> GetUserByIdAsync(int id);
         Task<Dictionary<int, string>> GetNicknamesByIdsAsync(IEnumerable<int> userIds);
+        Task<List<PublicUserSearchDto>> SearchUsersPublicAsync(string query, int take = 8);
 
         Task<bool> NicknameExistsAsync(string nickname);
         Task<bool> EmailExistsAsync(string email);
@@ -183,7 +185,11 @@ namespace StreamPlatformBackend.Services
 
         
 
-        public async Task<(List<OnlineUserListDto> Streams, int TotalCount)> GetOnlineStreamersAsync(int page = 1, int pageSize = 25)
+        public async Task<(List<OnlineUserListDto> Streams, int TotalCount)> GetOnlineStreamersAsync(
+            int page = 1,
+            int pageSize = 25,
+            int? categoryId = null,
+            string? tag = null)
         {
             if (page < 1) page = 1;
             if (pageSize < 1) pageSize = 25;
@@ -193,7 +199,21 @@ namespace StreamPlatformBackend.Services
                     u.CurrentStream != null &&
                     u.CurrentStream.StartedAt != null &&
                     u.CurrentStream.EndedAt == null)
-                .Include(u => u.CurrentStream)
+                .Include(u => u.CurrentStream)!
+                    .ThenInclude(s => s!.Category)
+                .Include(u => u.CurrentStream)!
+                    .ThenInclude(s => s!.Tags)
+                        .ThenInclude(t => t.Tag)
+                .AsQueryable();
+
+            if (categoryId is > 0)
+                query = query.Where(u => u.CurrentStream!.CategoryId == categoryId);
+
+            var tagSlug = (tag ?? string.Empty).Trim().ToLowerInvariant();
+            if (tagSlug.Length > 0)
+                query = query.Where(u => u.CurrentStream!.Tags.Any(t => t.Tag.Slug == tagSlug));
+
+            query = query
                 .OrderByDescending(u => u.CurrentStream!.StartedAt)
                 .ThenBy(u => u.Nickname)
                 .AsNoTracking();
@@ -213,11 +233,46 @@ namespace StreamPlatformBackend.Services
                     PreviewUrl = u.CurrentStream!.PreviewUrl,
                     StreamName = u.CurrentStream!.StreamName,
                     StreamId = u.CurrentStream!.Id,
-                    TotalViews = u.CurrentStream!.TotalViews
+                    TotalViews = u.CurrentStream!.TotalViews,
+                    CategoryId = u.CurrentStream!.CategoryId,
+                    CategoryName = u.CurrentStream!.Category != null ? u.CurrentStream.Category.Name : null
                 })
                 .ToListAsync();
 
             return (list, totalCount);
+        }
+
+        public async Task<List<PublicUserSearchDto>> SearchUsersPublicAsync(string query, int take = 8)
+        {
+            take = Math.Clamp(take, 1, 20);
+            var q = (query ?? string.Empty).Trim().ToLowerInvariant();
+            if (q.Length < 2)
+                return new List<PublicUserSearchDto>();
+
+            // Relevance: exact → prefix → substring; within tier: live first, then A–Z
+            return await _context.Users
+                .AsNoTracking()
+                .Where(u => u.Nickname.ToLower().Contains(q))
+                .OrderByDescending(u => u.Nickname.ToLower() == q)
+                .ThenByDescending(u => u.Nickname.ToLower().StartsWith(q))
+                .ThenByDescending(u => u.IsOnline)
+                .ThenBy(u => u.Nickname)
+                .Take(take)
+                .Select(u => new PublicUserSearchDto
+                {
+                    Id = u.Id,
+                    Nickname = u.Nickname,
+                    ProfileImage = u.ProfileImage,
+                    IsOnline = u.CurrentStream != null
+                        && u.CurrentStream.StartedAt != null
+                        && u.CurrentStream.EndedAt == null,
+                    StreamName = u.CurrentStream != null
+                        && u.CurrentStream.StartedAt != null
+                        && u.CurrentStream.EndedAt == null
+                            ? u.CurrentStream.StreamName
+                            : null
+                })
+                .ToListAsync();
         }
 
 
