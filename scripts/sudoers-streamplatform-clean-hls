@@ -1,0 +1,9 @@
+# Install:
+#   sudo cp scripts/streamplatform-clean-hls.sh /usr/local/bin/streamplatform-clean-hls
+#   sudo chmod 755 /usr/local/bin/streamplatform-clean-hls
+#   sudo cp scripts/sudoers-streamplatform-clean-hls /etc/sudoers.d/streamplatform-clean-hls
+#   sudo chmod 440 /etc/sudoers.d/streamplatform-clean-hls
+#
+# Lets the backend delete HLS trees written by nginx/ffmpeg (nobody).
+
+boxedstream ALL=(root) NOPASSWD: /usr/local/bin/streamplatform-clean-hls

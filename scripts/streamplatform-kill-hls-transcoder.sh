@@ -13,4 +13,11 @@ pkill -f "ffmpeg.*${STREAM_KEY}" 2>/dev/null || true
 # give ffmpeg a moment to release files
 sleep 0.3
 rm -rf "/var/www/streamplatform/live/${STREAM_KEY}" 2>/dev/null || true
+PLAYBACK_ID="${2:-}"
+if [[ -n "$PLAYBACK_ID" && "$PLAYBACK_ID" =~ ^[A-Za-z0-9_-]+$ ]]; then
+  link="/var/www/streamplatform/live/${PLAYBACK_ID}"
+  if [[ -L "$link" ]]; then
+    rm -f "$link"
+  fi
+fi
 exit 0

@@ -729,8 +729,7 @@ namespace StreamPlatformBackend.Services
                 var linkPath = Path.Combine(HlsLiveBase, playbackId);
                 if (Directory.Exists(linkPath) && !IsSymlink(linkPath))
                     return;
-                if (Directory.Exists(linkPath) || File.Exists(linkPath))
-                    Directory.Delete(linkPath);
+                TryUnlinkPlaybackPath(linkPath);
 
                 // Relative symlink so rename of live/ root still works
                 Directory.CreateSymbolicLink(linkPath, streamKey);
@@ -746,33 +745,89 @@ namespace StreamPlatformBackend.Services
         {
             if (string.IsNullOrWhiteSpace(streamKey) && string.IsNullOrWhiteSpace(playbackId))
                 return;
+            if (!string.IsNullOrWhiteSpace(streamKey) && !IsSafeHlsName(streamKey))
+                return;
+            if (!string.IsNullOrWhiteSpace(playbackId) && !IsSafeHlsName(playbackId))
+                return;
 
             try
             {
                 if (!string.IsNullOrWhiteSpace(playbackId))
-                {
-                    var linkPath = Path.Combine(HlsLiveBase, playbackId);
-                    if (Directory.Exists(linkPath) || File.Exists(linkPath) || IsSymlink(linkPath))
-                    {
-                        Directory.Delete(linkPath);
-                    }
-                }
+                    TryUnlinkPlaybackPath(Path.Combine(HlsLiveBase, playbackId));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to remove HLS playback link {PlaybackId}", playbackId);
+            }
 
-                if (!string.IsNullOrWhiteSpace(streamKey))
-                {
-                    var dir = Path.Combine(HlsLiveBase, streamKey);
-                    if (Directory.Exists(dir) && !IsSymlink(dir))
-                    {
-                        Directory.Delete(dir, recursive: true);
-                        _logger.LogInformation("Cleaned stale HLS output for {StreamKey}", MaskKey(streamKey));
-                    }
-                }
+            if (string.IsNullOrWhiteSpace(streamKey))
+                return;
+
+            // ffmpeg writes as www-data into 2755 dirs — boxedstream cannot unlink those files.
+            // Reuse the existing passwordless root helper (pkill + rm -rf). Harmless at stream start
+            // because nginx exec_push starts ffmpeg only after on_publish / StartStream returns.
+            if (TryRunProcess(
+                    "/usr/bin/sudo",
+                    $"-n /usr/local/bin/streamplatform-kill-hls-transcoder {streamKey}",
+                    out var sudoExit) && sudoExit == 0)
+            {
+                _logger.LogInformation("Cleaned HLS output via sudo helper for {StreamKey}", MaskKey(streamKey));
+                return;
+            }
+
+            if (TryRunProcess(
+                    "/usr/bin/sudo",
+                    $"-n /usr/local/bin/streamplatform-clean-hls {streamKey}",
+                    out var cleanExit) && cleanExit == 0)
+            {
+                _logger.LogInformation("Cleaned HLS output via clean helper for {StreamKey}", MaskKey(streamKey));
+                return;
+            }
+
+            try
+            {
+                var dir = Path.Combine(HlsLiveBase, streamKey);
+                if (IsSymlink(dir))
+                    File.Delete(dir);
+                else if (Directory.Exists(dir))
+                    DeleteDirectoryUnlink(dir);
+
+                _logger.LogInformation("Cleaned stale HLS output for {StreamKey}", MaskKey(streamKey));
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Failed to clean HLS output");
             }
         }
+
+        /// <summary>
+        /// Unlink files/dirs without chmod. Directory.Delete(recursive) fails on ffmpeg files
+        /// owned by www-data even when the backend is in that group.
+        /// </summary>
+        private static void DeleteDirectoryUnlink(string dir)
+        {
+            foreach (var file in Directory.EnumerateFiles(dir))
+                File.Delete(file);
+
+            foreach (var sub in Directory.EnumerateDirectories(dir))
+            {
+                if (IsSymlink(sub))
+                    File.Delete(sub);
+                else
+                    DeleteDirectoryUnlink(sub);
+            }
+
+            Directory.Delete(dir);
+        }
+
+        private static void TryUnlinkPlaybackPath(string linkPath)
+        {
+            if (IsSymlink(linkPath) || File.Exists(linkPath))
+                File.Delete(linkPath);
+        }
+
+        private static bool IsSafeHlsName(string name) =>
+            System.Text.RegularExpressions.Regex.IsMatch(name, @"^[A-Za-z0-9_-]+$");
 
         private static void EnsurePlaybackId(StreamModel stream)
         {
