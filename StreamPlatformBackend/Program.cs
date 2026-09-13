@@ -15,10 +15,24 @@ using System.Text;
 using System.Threading.RateLimiting;
 
 var builder = WebApplication.CreateBuilder(args);
+// Local overrides (gitignored). Prefer this over committing secrets to appsettings.json.
 builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
+LocalSecretsGuard.EnsureConfigured(builder.Configuration);
 
 // Добавляем поддержку JSON и контроллеров
 builder.Services.AddControllers();
+
+var maxImageBytes = Math.Max(
+    64 * 1024,
+    builder.Configuration.GetValue("Uploads:MaxImageBytes", ImageUploadValidator.DefaultMaxImageBytes));
+// Allow small multipart overhead above the validated image limit.
+var maxRequestBodyBytes = maxImageBytes + (512 * 1024);
+
+builder.Services.Configure<Microsoft.AspNetCore.Http.Features.FormOptions>(options =>
+{
+    options.MultipartBodyLengthLimit = maxRequestBodyBytes;
+    options.ValueLengthLimit = int.MaxValue;
+});
 
 // ⭐ Swagger с поддержкой XML комментариев ⭐
 builder.Services.AddEndpointsApiExplorer();
@@ -72,9 +86,12 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 // Регистрация сервисов
 builder.Services.AddScoped<IPasswordHasherService, PasswordHasherService>();
 builder.Services.AddScoped<IJwtService, JwtService>();
+builder.Services.AddScoped<IRefreshTokenService, RefreshTokenService>();
+builder.Services.AddScoped<IAuthCookieService, AuthCookieService>();
 builder.Services.AddScoped<INotificationRepository, NotificationRepository>();
 builder.Services.AddScoped<INotificationSender, NotificationSender>();
 builder.Services.AddScoped<ISettingsService, SettingsService>();
+builder.Services.AddScoped<IImageUploadValidator, ImageUploadValidator>();
 builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IStreamService, StreamService>();
 builder.Services.AddScoped<IStreamLiveNotifier, StreamLiveNotifier>();
@@ -82,8 +99,10 @@ builder.Services.AddScoped<IChatNicknameNotifier, ChatNicknameNotifier>();
 
 
 
+builder.Services.AddSingleton<ICatalogCache, RedisCatalogCache>();
 builder.Services.AddScoped<IRedisChatService, RedisChatService>();
 builder.Services.AddScoped<IStreamChatBanService, StreamChatBanService>();
+builder.Services.AddScoped<IStreamChatHistoryService, StreamChatHistoryService>();
 builder.Services.AddScoped<IStreamTeamService, StreamTeamService>();
 builder.Services.AddScoped<IStreamChatModerationLogService, StreamChatModerationLogService>();
 builder.Services.AddScoped<IStreamDashboardService, StreamDashboardService>();
@@ -200,18 +219,28 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ClockSkew = TimeSpan.Zero
         };
 
-        // IMPORTANT: allow JWT in querystring for SignalR websocket transport
+        // Resolve JWT from (1) Authorization header (default), (2) HttpOnly cookie, (3) SignalR query.
         options.Events = new JwtBearerEvents
         {
             OnMessageReceived = context =>
             {
-                // Try get token from query string for SignalR websocket requests
+                if (!string.IsNullOrEmpty(context.Token))
+                    return Task.CompletedTask;
+
+                if (context.Request.Cookies.TryGetValue(AuthCookieNames.Access, out var cookieToken)
+                    && !string.IsNullOrWhiteSpace(cookieToken))
+                {
+                    context.Token = cookieToken;
+                    return Task.CompletedTask;
+                }
+
                 var accessToken = context.Request.Query["access_token"].FirstOrDefault();
                 var path = context.HttpContext.Request.Path;
                 if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
                 {
                     context.Token = accessToken;
                 }
+
                 return Task.CompletedTask;
             }
         };
@@ -233,20 +262,22 @@ builder.WebHost.ConfigureKestrel(options =>
 {
     options.Limits.KeepAliveTimeout = TimeSpan.FromMinutes(10);
     options.Limits.RequestHeadersTimeout = TimeSpan.FromMinutes(10);
+    options.Limits.MaxRequestBodySize = maxRequestBodyBytes;
 });
 
 
 
 
-// Настройка CORS
+// CORS — explicit SPA origins + credentials (required for HttpOnly auth cookies).
+// Never AllowAnyOrigin.
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowAll", policy =>
-    {
-        policy.AllowAnyOrigin()
-              .AllowAnyMethod()
-              .AllowAnyHeader();
-    });
+    var allowedOrigins = CorsPolicyConfig.ResolveAllowedOrigins(
+        builder.Configuration,
+        builder.Environment);
+
+    options.AddPolicy(CorsPolicyConfig.PolicyName, policy =>
+        CorsPolicyConfig.ApplyFrontendPolicy(policy, allowedOrigins));
 });
 
 
@@ -303,7 +334,7 @@ using (var scope = app.Services.CreateScope())
 
 app.UseForwardedHeaders();
 app.UseRouting();
-app.UseCors("AllowAll");
+app.UseCors(CorsPolicyConfig.PolicyName);
 app.UseRateLimiter();
 
 app.UseHttpsRedirection();

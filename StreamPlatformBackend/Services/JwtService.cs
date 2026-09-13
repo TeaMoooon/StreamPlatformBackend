@@ -1,4 +1,4 @@
-﻿using Microsoft.IdentityModel.Tokens;
+using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
@@ -9,6 +9,7 @@ namespace StreamPlatformBackend.Services
     public interface IJwtService
     {
         string GenerateToken(UserModel user);
+        int AccessTokenSeconds { get; }
     }
 
     public class JwtService : IJwtService
@@ -16,13 +17,17 @@ namespace StreamPlatformBackend.Services
         private readonly string _secretKey;
         private readonly string _issuer;
         private readonly string _audience;
+        private readonly int _accessTokenMinutes;
 
         public JwtService(IConfiguration configuration)
         {
             _secretKey = configuration["Jwt:SecretKey"] ?? throw new ArgumentException("Jwt:SecretKey not set");
             _issuer = configuration["Jwt:Issuer"] ?? "StreamPlatformBackend";
             _audience = configuration["Jwt:Audience"] ?? "StreamPlatformUsers";
+            _accessTokenMinutes = Math.Max(1, configuration.GetValue("Jwt:AccessTokenMinutes", 30));
         }
+
+        public int AccessTokenSeconds => _accessTokenMinutes * 60;
 
         public string GenerateToken(UserModel user)
         {
@@ -47,7 +52,7 @@ namespace StreamPlatformBackend.Services
                 issuer: _issuer,
                 audience: _audience,
                 claims: claims,
-                expires: DateTime.UtcNow.AddHours(24), // Используем UTC
+                expires: DateTime.UtcNow.AddMinutes(_accessTokenMinutes),
                 signingCredentials: creds
             );
 

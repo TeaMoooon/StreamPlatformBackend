@@ -409,7 +409,7 @@ https://{PUBLIC_HOST}/media/users/{userId}/streams/{streamId}/record.mp4
 
 1. **OBS** — Server `rtmp://host/live`, Key = полный ключ из БД.
 2. **Ingest** — порт 1935 открыт; лог media server / nginx rtmp.
-3. **Колбэк** — `curl -X POST "http://127.0.0.1:5156/api/streamcallback/start?secret=..." -d "name=KEY"` → 200.
+3. **Колбэк** — `curl -X POST "http://127.0.0.1:5156/api/streamcallback/start" -H "X-Rtmp-Secret: ..." -d "name=KEY"` → 200.
 4. **HLS на диске** — `ls /var/www/streamplatform/live/{KEY}/` → `master.m3u8`, `720p/`, `480p/`.
 5. **Плеер** — URL `https://host/hls/{KEY}/master.m3u8` (не корневой `.m3u8` без `master`).
 

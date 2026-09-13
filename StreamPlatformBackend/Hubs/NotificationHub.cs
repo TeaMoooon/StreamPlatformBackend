@@ -6,12 +6,9 @@ using System.Security.Claims;
 namespace StreamPlatformBackend.Hubs
 {
     /// <summary>
-    /// Хаб для личных и групповых уведомлений.
-    /// Используется для:
-    /// - Уведомлений о новом стриме
-    /// - Уведомлений о подписках
-    /// - Личных уведомлений
-    /// - Системных событий
+    /// Receive-only hub for personal and subscription notification groups.
+    /// Outbound delivery is server-side only via <see cref="Services.NotificationService.INotificationSender"/>
+    /// and <c>IHubContext&lt;NotificationHub&gt;</c> — clients must never be able to broadcast.
     /// </summary>
     [Authorize]
     public class NotificationHub : Hub
@@ -26,9 +23,7 @@ namespace StreamPlatformBackend.Hubs
         }
 
         /// <summary>
-        /// Пользователь подключается, и мы автоматически подписываем его на:
-        /// - Личный канал уведомлений user_{userId}
-        /// - Все каналы стримеров, на которых он подписан
+        /// On connect: join personal group + groups for streamers the user actually follows.
         /// </summary>
         public override async Task OnConnectedAsync()
         {
@@ -39,16 +34,14 @@ namespace StreamPlatformBackend.Hubs
                 return;
             }
 
-            // Личная группа для уведомлений
-            await Groups.AddToGroupAsync(Context.ConnectionId, $"user_{userId}");
+            await Groups.AddToGroupAsync(Context.ConnectionId, UserGroup(userId));
 
             _logger.LogInformation("User {UserId} connected to NotificationHub", userId);
 
-            // Подписываем на всех стримеров, которых он фоловит
             var subscriptions = await _userService.GetSubscribedStreamerIdsAsync(userId);
             foreach (var streamerId in subscriptions)
             {
-                await Groups.AddToGroupAsync(Context.ConnectionId, $"streamer_subs_{streamerId}");
+                await Groups.AddToGroupAsync(Context.ConnectionId, StreamerSubsGroup(streamerId));
             }
 
             _logger.LogInformation(
@@ -60,85 +53,54 @@ namespace StreamPlatformBackend.Hubs
         }
 
         /// <summary>
-        /// Ручная подписка на уведомления стримера
+        /// Join a streamer's subscriber group only if the caller actively follows them.
         /// </summary>
         public async Task SubscribeToStreamer(int streamerId)
         {
             var userId = GetCurrentUserId();
-            if (userId <= 0) return;
+            if (userId <= 0 || streamerId <= 0)
+                return;
 
-            await Groups.AddToGroupAsync(Context.ConnectionId, $"streamer_subs_{streamerId}");
+            if (!await _userService.IsSubscribedAsync(userId, streamerId))
+            {
+                _logger.LogWarning(
+                    "User {UserId} attempted SubscribeToStreamer({StreamerId}) without an active follow",
+                    userId, streamerId);
+                return;
+            }
+
+            await Groups.AddToGroupAsync(Context.ConnectionId, StreamerSubsGroup(streamerId));
 
             _logger.LogInformation("User {UserId} subscribed to streamer {StreamerId}",
                 userId, streamerId);
         }
 
         /// <summary>
-        /// Ручная отписка от уведомлений стримера
+        /// Leave a streamer's subscriber group (safe even if not a member).
         /// </summary>
         public async Task UnsubscribeFromStreamer(int streamerId)
         {
             var userId = GetCurrentUserId();
-            if (userId <= 0) return;
+            if (userId <= 0 || streamerId <= 0)
+                return;
 
-            await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"streamer_subs_{streamerId}");
+            await Groups.RemoveFromGroupAsync(Context.ConnectionId, StreamerSubsGroup(streamerId));
 
             _logger.LogInformation("User {UserId} unsubscribed from streamer {StreamerId}",
                 userId, streamerId);
         }
-
-        /// <summary>
-        /// Отправить личное уведомление пользователю
-        /// </summary>
-        public async Task SendPersonalNotification(int targetUserId, string message, string type = "info")
-        {
-            await Clients.Group($"user_{targetUserId}").SendAsync("ReceiveNotification", new
-            {
-                Type = type,
-                Message = message,
-                Date = DateTime.UtcNow
-            });
-        }
-
-        /// <summary>
-        /// Уведомить всех подписчиков стримера (например: стрим начался)
-        /// </summary>
-        public async Task NotifyStreamerSubscribers(int streamerId, string message)
-        {
-            await Clients.Group($"streamer_subs_{streamerId}").SendAsync("ReceiveNotification", new
-            {
-                Type = "stream",
-                Message = message,
-                StreamerId = streamerId,
-                Date = DateTime.UtcNow
-            });
-
-            _logger.LogInformation("Sent notification to stream subscribers of {StreamerId}", streamerId);
-        }
-
-        /// <summary>
-        /// Получить ID текущего пользователя
-        /// </summary>
-        private int GetCurrentUserId()
-        {
-            var userIdClaim = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
-            return int.TryParse(userIdClaim, out int userId) ? userId : 0;
-        }
-
-
-
 
         public override async Task OnDisconnectedAsync(Exception? exception)
         {
             var userId = GetCurrentUserId();
             if (userId > 0)
             {
-                await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"user_{userId}");
+                await Groups.RemoveFromGroupAsync(Context.ConnectionId, UserGroup(userId));
 
                 var subscriptions = await _userService.GetSubscribedStreamerIdsAsync(userId);
                 foreach (var streamerId in subscriptions)
                 {
-                    await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"streamer_subs_{streamerId}");
+                    await Groups.RemoveFromGroupAsync(Context.ConnectionId, StreamerSubsGroup(streamerId));
                 }
 
                 _logger.LogInformation("User {UserId} disconnected from NotificationHub", userId);
@@ -146,5 +108,14 @@ namespace StreamPlatformBackend.Hubs
 
             await base.OnDisconnectedAsync(exception);
         }
+
+        private int GetCurrentUserId()
+        {
+            var userIdClaim = Context.User?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+            return int.TryParse(userIdClaim, out int userId) ? userId : 0;
+        }
+
+        public static string UserGroup(int userId) => $"user_{userId}";
+        public static string StreamerSubsGroup(int streamerId) => $"streamer_subs_{streamerId}";
     }
 }

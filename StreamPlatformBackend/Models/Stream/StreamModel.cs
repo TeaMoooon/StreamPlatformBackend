@@ -1,4 +1,4 @@
-﻿using StreamPlatformBackend.Models.User;
+using StreamPlatformBackend.Models.User;
 using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
 using System.Text.Json.Serialization;
@@ -69,9 +69,9 @@ namespace StreamPlatformBackend.Models.Stream
 
     //public bool AllowClipCreation { get; set; } = true; //может быть на будущее
 
-    // public virtual ICollection<StreamChatMessageModel> ChatMessages { get; set; } //хз как чат этот делать
-
     /*
+
+
      * 
      * Вот надо подумать тут или не тут
     public bool IsChatEnabled { get; set; } = true;

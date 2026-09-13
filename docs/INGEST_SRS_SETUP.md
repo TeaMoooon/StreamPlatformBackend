@@ -100,12 +100,13 @@ sudo ufw allow 1935/tcp   # RTMP для OBS
 Подставьте реальный ключ из таблицы `Users`:
 
 ```bash
-# nginx-формат (form)
-curl -X POST "http://127.0.0.1:5156/api/streamcallback/start?secret=your-secret-value" \
+# напрямую в API (заголовок X-Rtmp-Secret)
+curl -X POST "http://127.0.0.1:5156/api/streamcallback/start" \
+  -H "X-Rtmp-Secret: your-secret-value" \
   -d "name=live_USERID_GUID"
 
-# SRS-формат (JSON)
-curl -X POST "http://127.0.0.1:5156/api/streamcallback/start?secret=your-secret-value" \
+# через localhost nginx proxy (как nginx-rtmp/SRS) — secret в query нет
+curl -X POST "http://127.0.0.1:5155/rtmp/on_publish" \
   -H "Content-Type: application/json" \
   -d '{"app":"live","stream":"live_USERID_GUID"}'
 ```

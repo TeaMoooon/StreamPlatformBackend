@@ -77,6 +77,8 @@ namespace StreamPlatformBackend.Controllers
 
         [HttpPut("{streamerId:int}/stream/preview")]
         [Consumes("multipart/form-data")]
+        [RequestSizeLimit(ImageUploadValidator.DefaultMaxImageBytes + (512 * 1024))]
+        [RequestFormLimits(MultipartBodyLengthLimit = ImageUploadValidator.DefaultMaxImageBytes + (512 * 1024))]
         public async Task<IActionResult> UploadPreview(int streamerId, IFormFile previewImage)
         {
             try

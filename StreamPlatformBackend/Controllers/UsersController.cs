@@ -17,23 +17,29 @@ namespace StreamPlatformBackend.Controllers
     {
         private readonly IUserService _userService;
         private readonly ILogger<UsersController> _logger;
-        private readonly IJwtService _jwtService;
+        private readonly IRefreshTokenService _refreshTokenService;
+        private readonly IAuthCookieService _authCookies;
         private readonly IStreamService _streamService;
         private readonly IPlatformSanctionService _platformSanctions;
+        private readonly ICatalogCache _catalogCache;
 
 
         public UsersController(
             IUserService userService,
             IStreamService streamService,
-            IJwtService jwtService,
+            IRefreshTokenService refreshTokenService,
+            IAuthCookieService authCookies,
             IPlatformSanctionService platformSanctions,
+            ICatalogCache catalogCache,
             ILogger<UsersController> logger)
         {
             _userService = userService;
-            _jwtService = jwtService;
+            _refreshTokenService = refreshTokenService;
+            _authCookies = authCookies;
             _logger = logger;
             _streamService = streamService;
             _platformSanctions = platformSanctions;
+            _catalogCache = catalogCache;
         }
 
         /// <summary>
@@ -72,10 +78,10 @@ namespace StreamPlatformBackend.Controllers
         }
 
         /// <summary>
-        /// Вход пользователя (валидация логина). Возвращает JWT токен.
+        /// Вход пользователя. Access/refresh выдаются в HttpOnly cookies (не в JSON).
         /// </summary>
-        /// <param name="dto">Email и пароль.</param>
-        /// <response code="200">Авторизация успешна. Возвращается токен.</response>
+        /// <param name="dto">Email/логин и пароль.</param>
+        /// <response code="200">Авторизация успешна.</response>
         /// <response code="401">Неверный email или пароль.</response>
         /// <response code="500">Внутренняя ошибка сервера.</response>
         [HttpPost("login")]
@@ -100,9 +106,71 @@ namespace StreamPlatformBackend.Controllers
                 });
             }
 
-            var token = _jwtService.GenerateToken(user);
+            var pair = await _refreshTokenService.IssueAsync(user);
+            _authCookies.AppendAuthCookies(Response, Request, pair);
 
-            return Ok(new { token });
+            // Tokens stay in HttpOnly cookies — never expose them to JS.
+            return Ok(new
+            {
+                authenticated = true,
+                expiresIn = pair.ExpiresInSeconds
+            });
+        }
+
+        /// <summary>
+        /// Обмен refresh-токена на новую пару access + refresh (rotation).
+        /// Refresh берётся из HttpOnly cookie; body опционален (legacy).
+        /// </summary>
+        [HttpPost("refresh")]
+        [EnableRateLimiting("auth")]
+        public async Task<IActionResult> Refresh([FromBody] RefreshTokenRequestDto? dto)
+        {
+            var refreshToken = _authCookies.ReadRefreshToken(Request);
+            if (string.IsNullOrWhiteSpace(refreshToken))
+                refreshToken = dto?.RefreshToken;
+
+            if (string.IsNullOrWhiteSpace(refreshToken))
+                return BadRequest(new { message = "Refresh token is required" });
+
+            var pair = await _refreshTokenService.RotateAsync(refreshToken);
+            if (pair == null)
+            {
+                _authCookies.ClearAuthCookies(Response, Request);
+                return Unauthorized(new { message = "Invalid or expired refresh token" });
+            }
+
+            if (await _platformSanctions.BlocksLoginAsync(pair.UserId))
+            {
+                await _refreshTokenService.RevokeAllForUserAsync(pair.UserId);
+                _authCookies.ClearAuthCookies(Response, Request);
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = "Аккаунт заблокирован" });
+            }
+
+            _authCookies.AppendAuthCookies(Response, Request, pair);
+
+            return Ok(new
+            {
+                authenticated = true,
+                expiresIn = pair.ExpiresInSeconds
+            });
+        }
+
+        /// <summary>
+        /// Отзыв refresh-токена (logout) и очистка auth cookies.
+        /// </summary>
+        [HttpPost("logout")]
+        [EnableRateLimiting("auth")]
+        public async Task<IActionResult> Logout([FromBody] RefreshTokenRequestDto? dto)
+        {
+            var refreshToken = _authCookies.ReadRefreshToken(Request);
+            if (string.IsNullOrWhiteSpace(refreshToken))
+                refreshToken = dto?.RefreshToken;
+
+            if (!string.IsNullOrWhiteSpace(refreshToken))
+                await _refreshTokenService.RevokeAsync(refreshToken);
+
+            _authCookies.ClearAuthCookies(Response, Request);
+            return Ok(new { message = "Logged out" });
         }
 
 
@@ -119,24 +187,24 @@ namespace StreamPlatformBackend.Controllers
         {
             try
             {
-                var user = await _userService.GetUserByNameAsync(nickname);
-                if (user == null) return NotFound(new { message = "Пользователь не найден" });
+                var normalized = CatalogCacheKeys.NormalizeNickname(nickname);
+                if (string.IsNullOrEmpty(normalized))
+                    return NotFound(new { message = "Пользователь не найден" });
 
-                var dto = new UserPublicProfileDto
+                var cacheKey = _catalogCache.ChannelKey(normalized);
+                var dto = await _catalogCache.GetOrSetAsync(cacheKey, _catalogCache.ChannelTtl, async () =>
                 {
-                    Id = user.Id,
-                    Nickname = user.Nickname,
-                    ProfileDescription = user.ProfileDescription,
-                    ProfileImage = GetMediaUrl(user.ProfileImage),
-                    BackgroundImage = GetMediaUrl(user.BackgroundImage),
-                    RegistrationDate = user.RegistrationDate,
-                    IsOnline = user.IsOnline,
-                    CurrentStream = user.CurrentStream,
-                    SocialLinks = user.SocialLinks.Select(link => new UserSocialLinkDto{
-                                    Platform = link.Platform,
-                                    Url = link.Url
-                                    }).ToList()
-                };
+                    var user = await _userService.GetUserByNameAsync(normalized);
+                    if (user == null)
+                        return null;
+
+                    var profile = MapPublicProfile(user);
+                    await _catalogCache.BindChannelAsync(user.Id, user.Nickname);
+                    return profile;
+                });
+
+                if (dto == null)
+                    return NotFound(new { message = "Пользователь не найден" });
 
                 return Ok(dto);
             }
@@ -309,31 +377,26 @@ namespace StreamPlatformBackend.Controllers
                 if (page < 1) page = 1;
                 if (pageSize < 1) pageSize = 25;
 
-                var (streams, totalCount) = await _userService.GetOnlineStreamersAsync(page, pageSize, categoryId, tag);
-
-                // Если нужно добавить StreamId или обработать PreviewUrl через метод контроллера
-                var result = streams.Select(s => new OnlineUserListDto
+                var cacheKey = await _catalogCache.GetLivePageKeyAsync(page, pageSize, categoryId, tag);
+                var cached = await _catalogCache.GetOrSetAsync(cacheKey, _catalogCache.LiveTtl, async () =>
                 {
-                    UserId = s.UserId,
-                    Nickname = s.Nickname,
-                    ProfileImage = GetMediaUrl(s.ProfileImage),
-                    IsOnline = s.IsOnline,
-                    StreamersLeague = s.StreamersLeague,
-                    PreviewUrl = ResolveOnlinePreviewUrl(s),
-                    StreamName = s.StreamName,
-                    StreamId = s.StreamId,
-                    TotalViews = s.TotalViews,
-                    ViewerCount = StreamViewerStore.GetViewerCount(s.UserId),
-                    CategoryId = s.CategoryId,
-                    CategoryName = s.CategoryName
-                }).ToList();
+                    var (streams, totalCount) = await _userService.GetOnlineStreamersAsync(page, pageSize, categoryId, tag);
+                    return new CachedLiveStreamsPage
+                    {
+                        TotalStreams = totalCount,
+                        Streams = streams.Select(MapOnlineStreamCard).ToList()
+                    };
+                }) ?? new CachedLiveStreamsPage();
+
+                foreach (var stream in cached.Streams)
+                    stream.ViewerCount = StreamViewerStore.GetViewerCount(stream.UserId);
 
                 return Ok(new
                 {
                     Page = page,
                     PageSize = pageSize,
-                    TotalStreams = totalCount,
-                    Streams = result
+                    TotalStreams = cached.TotalStreams,
+                    Streams = cached.Streams
                 });
             }
             catch (Exception ex)
@@ -440,6 +503,45 @@ namespace StreamPlatformBackend.Controllers
         {
             if (string.IsNullOrEmpty(filename)) return string.Empty;
             return filename.StartsWith("/") ? filename : $"/media/users/{userId}/streams/{streamId}/{filename}";
+        }
+
+        private UserPublicProfileDto MapPublicProfile(UserModel user)
+        {
+            return new UserPublicProfileDto
+            {
+                Id = user.Id,
+                Nickname = user.Nickname,
+                ProfileDescription = user.ProfileDescription,
+                ProfileImage = GetMediaUrl(user.ProfileImage),
+                BackgroundImage = GetMediaUrl(user.BackgroundImage),
+                RegistrationDate = user.RegistrationDate,
+                IsOnline = user.IsOnline,
+                CurrentStream = user.CurrentStream,
+                SocialLinks = user.SocialLinks.Select(link => new UserSocialLinkDto
+                {
+                    Platform = link.Platform,
+                    Url = link.Url
+                }).ToList()
+            };
+        }
+
+        private OnlineUserListDto MapOnlineStreamCard(OnlineUserListDto stream)
+        {
+            return new OnlineUserListDto
+            {
+                UserId = stream.UserId,
+                Nickname = stream.Nickname,
+                ProfileImage = GetMediaUrl(stream.ProfileImage),
+                IsOnline = stream.IsOnline,
+                StreamersLeague = stream.StreamersLeague,
+                PreviewUrl = ResolveOnlinePreviewUrl(stream),
+                StreamName = stream.StreamName,
+                StreamId = stream.StreamId,
+                TotalViews = stream.TotalViews,
+                ViewerCount = 0,
+                CategoryId = stream.CategoryId,
+                CategoryName = stream.CategoryName
+            };
         }
 
         private string ResolveOnlinePreviewUrl(OnlineUserListDto stream)

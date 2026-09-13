@@ -7,7 +7,24 @@
     "SecretKey": "CHANGE_ME_TO_A_LONG_RANDOM_SECRET_32PLUS_CHARS",
     "Issuer": "StreamPlatformBackend",
     "Audience": "StreamPlatformUsers",
-    "ExpireHours": 24
+    "AccessTokenMinutes": 30,
+    "RefreshTokenDays": 30
+  },
+  "AuthCookies": {
+    "SameSite": "Lax",
+    "Secure": "auto"
+  },
+  "Uploads": {
+    "MaxImageBytes": 5242880
+  },
+  "Cors": {
+    "AllowedOrigins": [
+      "https://192.168.1.167",
+      "http://192.168.1.167",
+      "http://localhost:3000",
+      "https://localhost:3000",
+      "http://127.0.0.1:3000"
+    ]
   },
   "Rtmp": {
     "Secret": "CHANGE_ME_MATCH_NGINX_NOTIFY_SECRET",

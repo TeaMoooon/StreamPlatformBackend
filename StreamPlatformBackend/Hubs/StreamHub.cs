@@ -15,6 +15,7 @@ namespace StreamPlatformBackend.Hubs
         private readonly IUserService _userService;
         private readonly IRedisChatService _redisChatService;
         private readonly IStreamChatBanService _streamChatBanService;
+        private readonly IStreamChatHistoryService _chatHistoryService;
         private readonly IStreamChatModerationLogService _moderationLogService;
         private readonly IPlatformSanctionService _platformSanctions;
         private readonly ILogger<StreamHub> _logger;
@@ -27,6 +28,7 @@ namespace StreamPlatformBackend.Hubs
             IUserService userService,
             IRedisChatService redisChatService,
             IStreamChatBanService streamChatBanService,
+            IStreamChatHistoryService chatHistoryService,
             IStreamChatModerationLogService moderationLogService,
             IPlatformSanctionService platformSanctions,
             ILogger<StreamHub> logger)
@@ -35,6 +37,7 @@ namespace StreamPlatformBackend.Hubs
             _userService = userService;
             _redisChatService = redisChatService;
             _streamChatBanService = streamChatBanService;
+            _chatHistoryService = chatHistoryService;
             _moderationLogService = moderationLogService;
             _platformSanctions = platformSanctions;
             _logger = logger;
@@ -296,6 +299,7 @@ namespace StreamPlatformBackend.Hubs
                 };
 
                 await _redisChatService.AddMessageAsync(info.StreamId, message);
+                await _chatHistoryService.AddAsync(info.StreamId, streamerId, message);
                 await _redisChatService.PublishMessageAsync(info.StreamId, message);
                 await _redisChatService.RegisterMessageSentAsync(streamerId, userId, slowModeSeconds);
 
@@ -415,6 +419,8 @@ namespace StreamPlatformBackend.Hubs
                     await Clients.Caller.SendAsync("Error", "ChatMessageNotFound");
                     return;
                 }
+
+                await _chatHistoryService.MarkDeletedAsync(messageId, userId);
 
                 await Clients.Group($"stream_{streamerId}")
                     .SendAsync("ChatMessageDeleted", new
@@ -565,7 +571,10 @@ namespace StreamPlatformBackend.Hubs
                 await _streamChatBanService.BanAsync(streamerId, targetUserId, userId);
 
                 if (info.StreamId > 0)
+                {
                     await _redisChatService.MarkUserMessagesDeletedAsync(info.StreamId, targetUserId);
+                    await _chatHistoryService.MarkUserMessagesDeletedAsync(info.StreamId, targetUserId, userId);
+                }
 
                 await Clients.Group($"stream_{streamerId}")
                     .SendAsync("ChatUserBanned", new

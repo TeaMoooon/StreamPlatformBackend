@@ -30,15 +30,21 @@ namespace StreamPlatformBackend.Services
         private readonly AppDbContext _context;
         private readonly IPasswordHasherService _passwordHasher;
         private readonly ILogger<SettingsService> _logger;
+        private readonly ICatalogCache _catalogCache;
+        private readonly IImageUploadValidator _imageUploadValidator;
         private readonly string _mediaPath;
         public SettingsService(AppDbContext context, IConfiguration configuration, 
                                IPasswordHasherService passwordHasher, INotificationRepository notificationRepository, 
-                               INotificationSender notificationSender, ILogger<SettingsService> logger)
+                               INotificationSender notificationSender, ILogger<SettingsService> logger,
+                               ICatalogCache catalogCache,
+                               IImageUploadValidator imageUploadValidator)
         {
             _context = context;
             _passwordHasher = passwordHasher;
             _logger = logger;
             _mediaPath = configuration["Media:Path"];
+            _catalogCache = catalogCache;
+            _imageUploadValidator = imageUploadValidator;
         }
 
         // ==================================================
@@ -55,6 +61,7 @@ namespace StreamPlatformBackend.Services
                 if (user == null)
                     throw new ArgumentException("Пользователь не найден");
 
+                var previousNickname = user.Nickname;
                 bool hasChanges = false;
 
                 hasChanges |= await UpdateEmailAsync(user, dto.Email);
@@ -78,7 +85,10 @@ namespace StreamPlatformBackend.Services
                 }
 
                 if (hasChanges)
+                {
                     await _context.SaveChangesAsync();
+                    await InvalidateCatalogAsync(userId, previousNickname, user.Nickname);
+                }
             }
             catch (Exception ex)
             {
@@ -286,40 +296,27 @@ namespace StreamPlatformBackend.Services
             if (user == null)
                 throw new ArgumentException("Пользователь не найден");
 
-            // Разрешённые расширения
-            var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".webp" };
-            var extension = Path.GetExtension(file.FileName).ToLower();
+            var validated = await _imageUploadValidator.ValidateAsync(file);
 
-            if (!allowedExtensions.Contains(extension))
-                throw new ArgumentException("Разрешены только форматы: JPG, PNG, WEBP");
-
-            // Папка для хранения медиа конкретного пользователя
-            // Берём путь из конфигурации, fallback если не задан
             string baseMediaPath = _mediaPath ?? "/var/www/streamplatform/media";
             var folderPath = Path.Combine(baseMediaPath, "users", user.Id.ToString());
             Directory.CreateDirectory(folderPath);
 
-            // Имя файла
             string fileName = type switch
             {
-                "profile" => $"profile{extension}",
-                "background" => $"background{extension}",
+                "profile" => $"profile{validated.Extension}",
+                "background" => $"background{validated.Extension}",
                 _ => throw new ArgumentException("Неверный тип изображения")
             };
 
             var fullPath = Path.Combine(folderPath, fileName);
-
-            // Сохраняем файл
-            using (var stream = new FileStream(fullPath, FileMode.Create))
-                await file.CopyToAsync(stream);
+            await File.WriteAllBytesAsync(fullPath, validated.Content);
 
             // URL для фронтенда (через Nginx /media/)
             string url = $"/media/users/{user.Id}/{fileName}";
 
-            // Обновляем поля пользователя
             if (type == "profile") user.ProfileImage = url;
             if (type == "background") user.BackgroundImage = url;
-
         }
 
 
@@ -336,8 +333,12 @@ namespace StreamPlatformBackend.Services
         // ========================== Stream settings ===============================
         public async Task<bool> UpdateStreamSettingsAsync(int userId, StreamUpdateDto dto)
         {
-            var stream = (await _context.Users.Include(u => u.CurrentStream).ThenInclude(s => s.Tags).FirstOrDefaultAsync(u => u.Id == userId))?.CurrentStream;
-            if (stream == null) return false;
+            var user = await _context.Users
+                .Include(u => u.CurrentStream)
+                    .ThenInclude(s => s!.Tags)
+                .FirstOrDefaultAsync(u => u.Id == userId);
+            var stream = user?.CurrentStream;
+            if (stream == null || stream.EndedAt != null) return false;
 
             if (!string.IsNullOrEmpty(dto.StreamName))
                 await UpdateStreamNameAsync(stream, dto.StreamName);
@@ -352,6 +353,7 @@ namespace StreamPlatformBackend.Services
                 await UpdateStreamTagsAsync(stream, dto.Tags.ToList());
 
             await _context.SaveChangesAsync();
+            await InvalidateCatalogAsync(userId, user!.Nickname);
             return true;
         }
 
@@ -368,12 +370,14 @@ namespace StreamPlatformBackend.Services
                 var url = await UploadStreamPreviewAsync(liveStream, file);
                 user.LastPreviewUrl = url;
                 await _context.SaveChangesAsync();
+                await InvalidateCatalogAsync(userId, user.Nickname);
                 return url;
             }
 
             var offlineUrl = await UploadOfflineStreamPreviewAsync(user, file);
             user.LastPreviewUrl = offlineUrl;
             await _context.SaveChangesAsync();
+            await InvalidateCatalogAsync(userId, user.Nickname);
             return offlineUrl;
         }
 
@@ -479,22 +483,16 @@ namespace StreamPlatformBackend.Services
 
         private async Task<string> UploadStreamPreviewAsync(StreamModel stream, IFormFile file)
         {
-            var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".webp" };
-            var extension = Path.GetExtension(file.FileName).ToLower();
-
-            if (!allowedExtensions.Contains(extension))
-                throw new ArgumentException("Разрешены только JPG, PNG, WEBP");
+            var validated = await _imageUploadValidator.ValidateAsync(file);
 
             string baseMediaPath = _mediaPath ?? "/var/www/streamplatform/media";
             var folderPath = Path.Combine(baseMediaPath, "users", stream.UserId.ToString(), "streams", stream.Id.ToString());
 
             Directory.CreateDirectory(folderPath);
 
-            string fileName = $"preview{extension}";
+            string fileName = $"preview{validated.Extension}";
             string fullPath = Path.Combine(folderPath, fileName);
-
-            using (var streamFile = new FileStream(fullPath, FileMode.Create))
-                await file.CopyToAsync(streamFile);
+            await File.WriteAllBytesAsync(fullPath, validated.Content);
 
             string url = $"/media/users/{stream.UserId}/streams/{stream.Id}/{fileName}";
             stream.PreviewUrl = url;
@@ -504,27 +502,31 @@ namespace StreamPlatformBackend.Services
 
         private async Task<string> UploadOfflineStreamPreviewAsync(UserModel user, IFormFile file)
         {
-            var allowedExtensions = new[] { ".jpg", ".jpeg", ".png", ".webp" };
-            var extension = Path.GetExtension(file.FileName).ToLower();
-
-            if (!allowedExtensions.Contains(extension))
-                throw new ArgumentException("Разрешены только JPG, PNG, WEBP");
+            var validated = await _imageUploadValidator.ValidateAsync(file);
 
             string baseMediaPath = _mediaPath ?? "/var/www/streamplatform/media";
             var folderPath = Path.Combine(baseMediaPath, "users", user.Id.ToString());
 
             Directory.CreateDirectory(folderPath);
 
-            string fileName = $"stream-preview{extension}";
+            string fileName = $"stream-preview{validated.Extension}";
             string fullPath = Path.Combine(folderPath, fileName);
-
-            using (var streamFile = new FileStream(fullPath, FileMode.Create))
-                await file.CopyToAsync(streamFile);
+            await File.WriteAllBytesAsync(fullPath, validated.Content);
 
             return $"/media/users/{user.Id}/{fileName}";
         }
 
-
-
+        private async Task InvalidateCatalogAsync(int userId, params string?[] nicknames)
+        {
+            try
+            {
+                await _catalogCache.InvalidateLiveListsAsync();
+                await _catalogCache.InvalidateChannelAsync(userId, nicknames);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to invalidate catalog cache for user {UserId}", userId);
+            }
+        }
     }
 }

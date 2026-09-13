@@ -113,6 +113,10 @@ namespace StreamPlatformBackend.Services
 
         public async Task<UserModel?> LoginAsync(string loginOrEmail, string password)
         {
+            loginOrEmail = (loginOrEmail ?? string.Empty).Trim();
+            if (string.IsNullOrEmpty(loginOrEmail))
+                return null;
+
             UserModel? user;
 
             // Проверяем, что это email (если есть @)

@@ -59,6 +59,11 @@ namespace StreamPlatformBackend.Services
 
         public async Task AddMessageAsync(int streamId, ChatMessageDto message)
         {
+            if (message == null)
+                throw new ArgumentNullException(nameof(message));
+            if (string.IsNullOrWhiteSpace(message.Text))
+                throw new ArgumentException("Chat message text cannot be empty or whitespace.", nameof(message));
+
             var json = JsonSerializer.Serialize(message);
             var key = GetChatKey(streamId);
             await _db.ListRightPushAsync(key, json);
@@ -68,7 +73,11 @@ namespace StreamPlatformBackend.Services
         public async Task<List<ChatMessageDto>> GetLastMessagesAsync(int streamId)
         {
             var messages = await _db.ListRangeAsync(GetChatKey(streamId), 0, -1);
-            return messages.Select(m => JsonSerializer.Deserialize<ChatMessageDto>(m)!).ToList();
+            return messages
+                .Select(TryDeserializeMessage)
+                .Where(IsValidMessage)
+                .Select(message => message!)
+                .ToList();
         }
 
         public async Task SetModeratorsAsync(int streamerId, IEnumerable<int> userIds)
@@ -167,6 +176,8 @@ namespace StreamPlatformBackend.Services
                 return null;
 
             var elapsed = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - lastUnix;
+            if (elapsed < 0)
+                return null;
             if (elapsed >= slowModeSeconds)
                 return null;
 
@@ -195,7 +206,7 @@ namespace StreamPlatformBackend.Services
 
             for (var i = 0; i < messages.Length; i++)
             {
-                var message = JsonSerializer.Deserialize<ChatMessageDto>(messages[i]!);
+                var message = TryDeserializeMessage(messages[i]);
                 if (message?.Id != messageId || message.IsDeleted)
                     continue;
 
@@ -214,13 +225,38 @@ namespace StreamPlatformBackend.Services
 
             for (var i = 0; i < messages.Length; i++)
             {
-                var message = JsonSerializer.Deserialize<ChatMessageDto>(messages[i]!);
+                var message = TryDeserializeMessage(messages[i]);
                 if (message == null || message.IsDeleted || message.UserId != userId)
                     continue;
 
                 message.IsDeleted = true;
                 await _db.ListSetByIndexAsync(key, i, JsonSerializer.Serialize(message));
             }
+        }
+
+        private ChatMessageDto? TryDeserializeMessage(RedisValue raw)
+        {
+            if (!raw.HasValue)
+                return null;
+
+            try
+            {
+                return JsonSerializer.Deserialize<ChatMessageDto>(raw!);
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+
+        private static bool IsValidMessage(ChatMessageDto? message)
+        {
+            if (message == null)
+                return false;
+            if (!message.IsDeleted && message.Text == null)
+                return false;
+
+            return true;
         }
 
         public async Task SetTimeoutAsync(int streamerId, int userId, int seconds)
@@ -263,9 +299,22 @@ namespace StreamPlatformBackend.Services
         public async Task SetBansAsync(int streamerId, IEnumerable<int> userIds)
         {
             var key = GetBansKey(streamerId);
-            await _db.KeyDeleteAsync(key);
-            foreach (var userId in userIds)
+            var desiredIds = new HashSet<int>((userIds ?? Enumerable.Empty<int>()).Where(id => id > 0));
+            var existingMembers = await _db.SetMembersAsync(key);
+
+            foreach (var userId in desiredIds)
                 await _db.SetAddAsync(key, userId);
+
+            foreach (var member in existingMembers ?? Array.Empty<RedisValue>())
+            {
+                if (!int.TryParse(member.ToString(), out var existingUserId) || desiredIds.Contains(existingUserId))
+                    continue;
+
+                await _db.SetRemoveAsync(key, existingUserId);
+            }
+
+            if (desiredIds.Count == 0)
+                await _db.KeyDeleteAsync(key);
         }
 
         public async Task<bool> IsBannedAsync(int streamerId, int userId)
@@ -288,7 +337,20 @@ namespace StreamPlatformBackend.Services
 
                     for (var i = 0; i < messages.Length; i++)
                     {
-                        var message = JsonSerializer.Deserialize<ChatMessageDto>(messages[i]!);
+                        var raw = messages[i];
+                        if (!raw.HasValue)
+                            continue;
+
+                        ChatMessageDto? message;
+                        try
+                        {
+                            message = JsonSerializer.Deserialize<ChatMessageDto>(raw!);
+                        }
+                        catch (JsonException)
+                        {
+                            // Корруптнутые сообщения в Redis не должны валить массовое обновление.
+                            continue;
+                        }
                         if (message == null || message.UserId != userId || message.Username == newUsername)
                             continue;
 

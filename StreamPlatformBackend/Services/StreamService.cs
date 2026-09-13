@@ -40,6 +40,7 @@ namespace StreamPlatformBackend.Services
         private readonly IServiceScopeFactory _scopeFactory;
         private readonly IStreamLiveNotifier _streamLiveNotifier;
         private readonly IPlatformSanctionService _platformSanctions;
+        private readonly ICatalogCache _catalogCache;
 
         private readonly TimeSpan ReconnectWindow = TimeSpan.FromSeconds(30);
         private readonly string RecordsBase = "/var/www/streamplatform/records/";
@@ -52,7 +53,8 @@ namespace StreamPlatformBackend.Services
                             ILogger<StreamService> logger,
                             IServiceScopeFactory scopeFactory,
                             IStreamLiveNotifier streamLiveNotifier,
-                            IPlatformSanctionService platformSanctions
+                            IPlatformSanctionService platformSanctions,
+                            ICatalogCache catalogCache
                             )
         {
             _context = context;
@@ -62,6 +64,7 @@ namespace StreamPlatformBackend.Services
             _scopeFactory = scopeFactory;
             _streamLiveNotifier = streamLiveNotifier;
             _platformSanctions = platformSanctions;
+            _catalogCache = catalogCache;
         }
 
         public async Task<StreamModel?> GetActiveStreamForUserAsync(int userId)
@@ -101,6 +104,7 @@ namespace StreamPlatformBackend.Services
             if (active != null)
             {
                 active.LastPingAt = now;
+                active.WaitingReconnect = false;
                 EnsurePlaybackId(active);
                 user.CurrentStream = active;
                 user.IsOnline = true;
@@ -122,6 +126,7 @@ namespace StreamPlatformBackend.Services
             {
                 last.EndedAt = null;
                 last.LastPingAt = now;
+                last.WaitingReconnect = false;
                 EnsurePlaybackId(last);
 
                 user.CurrentStream = last;
@@ -129,6 +134,7 @@ namespace StreamPlatformBackend.Services
 
                 await _context.SaveChangesAsync();
                 TryEnsureHlsPlaybackLink(streamKey, last.PublicId);
+                await InvalidateCatalogAsync(userId, user.Nickname);
                 await NotifyStreamLiveAsync(userId);
                 return last;
             }
@@ -204,6 +210,7 @@ namespace StreamPlatformBackend.Services
 
             TryCleanHlsOutput(streamKey, stream.PublicId);
             TryEnsureHlsPlaybackLink(streamKey, stream.PublicId);
+            await InvalidateCatalogAsync(userId, user.Nickname);
             await NotifyStreamLiveAsync(userId);
 
             return stream;
@@ -212,6 +219,16 @@ namespace StreamPlatformBackend.Services
 
         public async Task UpdateHeartbeatAsync(int userId, string? streamKey = null)
         {
+            if (!string.IsNullOrWhiteSpace(streamKey))
+            {
+                var actualStreamKey = await _context.Users
+                    .Where(u => u.Id == userId)
+                    .Select(u => u.StreamKey)
+                    .FirstOrDefaultAsync();
+                if (string.IsNullOrEmpty(actualStreamKey) || !string.Equals(actualStreamKey, streamKey, StringComparison.Ordinal))
+                    return;
+            }
+
             var stream = await _context.Streams
                 .Where(s => s.UserId == userId && s.EndedAt == null)
                 .OrderByDescending(s => s.StartedAt)
@@ -261,6 +278,7 @@ namespace StreamPlatformBackend.Services
                 if (changed)
                 {
                     await _context.SaveChangesAsync();
+                    await InvalidateCatalogAsync(userId, user.Nickname);
                     await _streamLiveNotifier.PublishStatusAsync(userId, null);
                 }
 
@@ -283,6 +301,7 @@ namespace StreamPlatformBackend.Services
                 TryCleanHlsOutput(streamKey, stream.PublicId);
             }
 
+            await InvalidateCatalogAsync(userId, user.Nickname);
             await _streamLiveNotifier.PublishStatusAsync(userId, null);
 
             _logger.LogWarning(
@@ -323,6 +342,7 @@ namespace StreamPlatformBackend.Services
                 TryKillHlsTranscoder(streamKey);
                 TryCleanHlsOutput(streamKey);
                 await _context.SaveChangesAsync();
+                await InvalidateCatalogAsync(userId, user.Nickname);
                 return true;
             }
 
@@ -384,6 +404,9 @@ namespace StreamPlatformBackend.Services
                 TryCleanHlsOutput(streamKey, s.PublicId);
 
                 var liveNotifier = scope.ServiceProvider.GetRequiredService<IStreamLiveNotifier>();
+                var catalogCache = scope.ServiceProvider.GetRequiredService<ICatalogCache>();
+                await catalogCache.InvalidateLiveListsAsync();
+                await catalogCache.InvalidateChannelAsync(usr.Id, usr.Nickname);
                 await liveNotifier.PublishStatusAsync(usr.Id, null);
 
                 // Обработка записи
@@ -666,11 +689,21 @@ namespace StreamPlatformBackend.Services
         {
             try
             {
+                var user = await _context.Users
+                    .Include(u => u.CurrentStream)
+                    .FirstOrDefaultAsync(u => u.Id == userId);
+                if (user == null) return;
+
                 var stream = await _context.Streams.FirstOrDefaultAsync(s => s.UserId == userId && s.StartedAt != null && s.EndedAt == null);
                 if (stream == null) return;
                 stream.RecordPath = filePath;
                 stream.EndedAt = DateTime.UtcNow;
+                user.IsOnline = false;
+                if (user.CurrentStreamId == stream.Id)
+                    user.CurrentStream = null;
                 await _context.SaveChangesAsync();
+                await InvalidateCatalogAsync(userId, user.Nickname);
+                await _streamLiveNotifier.PublishStatusAsync(userId, null);
             }
             catch (Exception ex)
             {
@@ -707,6 +740,19 @@ namespace StreamPlatformBackend.Services
                     TimeSpan.FromSeconds(3),
                     TimeSpan.FromSeconds(8),
                     TimeSpan.FromSeconds(15));
+            }
+        }
+
+        private async Task InvalidateCatalogAsync(int userId, string? nickname)
+        {
+            try
+            {
+                await _catalogCache.InvalidateLiveListsAsync();
+                await _catalogCache.InvalidateChannelAsync(userId, nickname);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to invalidate catalog cache for user {UserId}", userId);
             }
         }
 

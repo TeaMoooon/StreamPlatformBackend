@@ -49,6 +49,8 @@ namespace StreamPlatformBackend.Controllers
         /// <response code="500">Внутренняя ошибка сервера</response>
         [HttpPut("profile")]
         [Consumes("multipart/form-data")]
+        [RequestSizeLimit(ImageUploadValidator.DefaultMaxImageBytes + (512 * 1024))]
+        [RequestFormLimits(MultipartBodyLengthLimit = ImageUploadValidator.DefaultMaxImageBytes + (512 * 1024))]
         public async Task<IActionResult> UpdateUserProfile([FromForm] UserUpdateDataDto dto)
         {
             int userId = int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? throw new UnauthorizedAccessException());
@@ -150,6 +152,8 @@ namespace StreamPlatformBackend.Controllers
         /// <response code="500">Внутренняя ошибка сервера</response>
         [HttpPut("stream")]
         [Consumes("multipart/form-data")]
+        [RequestSizeLimit(ImageUploadValidator.DefaultMaxImageBytes + (512 * 1024))]
+        [RequestFormLimits(MultipartBodyLengthLimit = ImageUploadValidator.DefaultMaxImageBytes + (512 * 1024))]
         public async Task<IActionResult> UpdateStreamSettings([FromForm] StreamUpdateDto dto)
         {
             int userId = int.Parse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value ?? throw new UnauthorizedAccessException());

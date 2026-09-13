@@ -12,6 +12,7 @@ public class StreamCallbackController : ControllerBase
     private readonly ILogger<StreamCallbackController> _logger;
     private readonly AppDbContext _context;
     private readonly string _rtmpSecret;
+    private readonly bool _isRtmpSecretConfigured;
 
     public StreamCallbackController(
         IStreamService streamService,
@@ -22,25 +23,35 @@ public class StreamCallbackController : ControllerBase
         _streamService = streamService;
         _logger = logger;
         _context = context;
-        _rtmpSecret = configuration["Rtmp:Secret"] ?? "your-secret-value";
+        _rtmpSecret = configuration["Rtmp:Secret"]?.Trim() ?? string.Empty;
+        _isRtmpSecretConfigured = RtmpCallbackAuth.IsConfigured(_rtmpSecret);
     }
 
     [HttpPost("start")]
-    public async Task<IActionResult> OnStreamStart([FromQuery] string secret)
+    public async Task<IActionResult> OnStreamStart()
     {
         try
         {
+            var authFailure = ValidateRtmpSecret();
+            if (authFailure != null)
+                return authFailure;
+
             var streamKey = await ReadStreamKeyFromCallbackAsync();
             if (string.IsNullOrEmpty(streamKey))
                 return BadRequest("Stream key is required");
 
             _logger.LogInformation("=== STREAM START CALLBACK === streamKey={Key}", streamKey);
 
-            if (secret != _rtmpSecret)
-                return Unauthorized("Invalid secret");
-
             if (!TryParseUserIdFromStreamKey(streamKey, out int userId))
-                return Unauthorized("Invalid stream key format");
+                return BadRequest("Invalid stream key format");
+
+            var userStreamKey = await _context.Users
+                .AsNoTracking()
+                .Where(u => u.Id == userId)
+                .Select(u => u.StreamKey)
+                .FirstOrDefaultAsync();
+            if (string.IsNullOrEmpty(userStreamKey) || !string.Equals(userStreamKey, streamKey, StringComparison.Ordinal))
+                return Unauthorized("Invalid stream key");
 
             await _streamService.StartStreamAsync(userId, streamKey);
             return Ok();
@@ -65,17 +76,22 @@ public class StreamCallbackController : ControllerBase
     }
 
     [HttpPost("end")]
-    public async Task<IActionResult> OnStreamEnd([FromQuery] string secret)
+    public async Task<IActionResult> OnStreamEnd()
     {
         try
         {
+            var authFailure = ValidateRtmpSecret();
+            if (authFailure != null)
+                return authFailure;
+
             var streamKey = await ReadStreamKeyFromCallbackAsync();
 
             _logger.LogInformation("=== STREAM END CALLBACK === streamKey={Key}", streamKey);
-            if (string.IsNullOrEmpty(streamKey)) return Ok();
+            if (string.IsNullOrEmpty(streamKey))
+                return BadRequest(new { message = "Stream key is required" });
 
-            if (!TryParseUserIdFromStreamKey(streamKey, out int userId)) return Ok();
-            if (secret != _rtmpSecret) return Ok();
+            if (!TryParseUserIdFromStreamKey(streamKey, out int userId))
+                return BadRequest(new { message = "Invalid stream key format" });
 
             await _streamService.EndStreamAsync(userId, streamKey);
             return Ok();
@@ -83,7 +99,7 @@ public class StreamCallbackController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "=== STREAM END ERROR ===");
-            return Ok();
+            return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Internal error" });
         }
     }
 
@@ -93,7 +109,19 @@ public class StreamCallbackController : ControllerBase
         try
         {
             if (string.IsNullOrEmpty(streamKey)) return BadRequest();
+
+            var authFailure = ValidateRtmpSecret();
+            if (authFailure != null)
+                return authFailure;
+
             if (!TryParseUserIdFromStreamKey(streamKey, out int userId)) return BadRequest();
+            var userStreamKey = await _context.Users
+                .AsNoTracking()
+                .Where(u => u.Id == userId)
+                .Select(u => u.StreamKey)
+                .FirstOrDefaultAsync();
+            if (string.IsNullOrEmpty(userStreamKey) || !string.Equals(userStreamKey, streamKey, StringComparison.Ordinal))
+                return Unauthorized();
 
             await _streamService.UpdateHeartbeatAsync(userId, streamKey);
             return Ok();
@@ -101,8 +129,34 @@ public class StreamCallbackController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "Ping error for {Key}", streamKey);
-            return Ok();
+            return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Internal error" });
         }
+    }
+
+    private IActionResult? ValidateRtmpSecret()
+    {
+        if (!_isRtmpSecretConfigured)
+            return Unauthorized("RTMP secret is not configured");
+
+        var provided = RtmpCallbackAuth.ReadProvidedSecret(Request);
+
+        // Migration fallback: old nginx-rtmp configs still pass ?secret= on loopback.
+        // Prefer X-Rtmp-Secret via 127.0.0.1:5155 proxy; query auth is loopback-only
+        // so the value is not accepted from the public network.
+        if (provided == null &&
+            Request.Query.TryGetValue("secret", out var querySecret) &&
+            RtmpCallbackAuth.IsLoopback(Request) &&
+            !string.IsNullOrEmpty(querySecret.ToString()))
+        {
+            _logger.LogWarning(
+                "RTMP callback used query-string secret from loopback; migrate on_publish to http://127.0.0.1:5155/rtmp/on_publish");
+            provided = querySecret.ToString();
+        }
+
+        if (!RtmpCallbackAuth.SecretsMatch(_rtmpSecret, provided))
+            return Unauthorized("Invalid secret");
+
+        return null;
     }
 
     private bool TryParseUserIdFromStreamKey(string streamKey, out int userId)
@@ -121,17 +175,38 @@ public class StreamCallbackController : ControllerBase
     {
         if (Request.HasFormContentType)
         {
-            var form = await Request.ReadFormAsync();
-            var name = form["name"].ToString();
-            if (!string.IsNullOrEmpty(name))
-                return NormalizeStreamKey(name);
+            try
+            {
+                var form = await Request.ReadFormAsync();
+                var name = form["name"].ToString();
+                if (!string.IsNullOrEmpty(name))
+                    return NormalizeStreamKey(name);
+            }
+            catch (Exception ex) when (ex is InvalidDataException or IOException)
+            {
+                return null;
+            }
         }
 
         if (Request.ContentType?.Contains("application/json", StringComparison.OrdinalIgnoreCase) == true)
         {
-            using var doc = await JsonDocument.ParseAsync(Request.Body);
-            if (doc.RootElement.TryGetProperty("stream", out var streamEl))
-                return NormalizeStreamKey(streamEl.GetString());
+            try
+            {
+                using var doc = await JsonDocument.ParseAsync(Request.Body);
+                if (doc.RootElement.TryGetProperty("stream", out var streamEl))
+                {
+                    if (streamEl.ValueKind != JsonValueKind.String)
+                        return null;
+
+                    return NormalizeStreamKey(streamEl.GetString());
+                }
+            }
+            catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException)
+            {
+                // Адверсиальные/битые payload'ы должны давать корректный 400,
+                // а не приводить к 500 из-за необработанного исключения.
+                return null;
+            }
         }
 
         return null;

@@ -359,7 +359,11 @@ MigrationBackup/
 # Ionide (cross platform F# VS Code tools) working folder
 .ionide/
 
-# Local secrets (copy from appsettings.Local.json.example)
+# Local secrets — never commit real values
+# Copy: cp StreamPlatformBackend/appsettings.Local.json.example StreamPlatformBackend/appsettings.Local.json
+# Then: chmod 600 StreamPlatformBackend/appsettings.Local.json
 appsettings.Local.json
+**/appsettings.Local.json
 **/appsettings.Secrets.json
 deploy/ubuntu/backend.env
+**/rtmp-callback-secret.conf

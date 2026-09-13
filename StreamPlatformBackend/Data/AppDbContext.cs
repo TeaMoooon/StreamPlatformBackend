@@ -14,6 +14,7 @@ namespace StreamPlatformBackend.Data
         }
 
         public DbSet<UserModel> Users { get; set; }
+        public DbSet<RefreshToken> RefreshTokens { get; set; }
         public DbSet<SubscriptionModel> Subscriptions { get; set; }
         public DbSet<StreamModel> Streams { get; set; }
         public DbSet<StreamCategoryModel> StreamCategories { get; set; }
@@ -21,6 +22,7 @@ namespace StreamPlatformBackend.Data
         public DbSet<UserSocialLink> UserSocialLinks { get; set; }
         public DbSet<StreamModerator> StreamModerators { get; set; }
         public DbSet<StreamChatBan> StreamChatBans { get; set; }
+        public DbSet<StreamChatMessage> StreamChatMessages { get; set; }
         public DbSet<StreamChatModerationLog> StreamChatModerationLogs { get; set; }
         public DbSet<StaffAuditLog> StaffAuditLogs { get; set; }
         public DbSet<PlatformSanction> PlatformSanctions { get; set; }
@@ -70,6 +72,19 @@ namespace StreamPlatformBackend.Data
                 .HasOne(s => s.User)
                 .WithMany(u => u.SocialLinks)
                 .HasForeignKey(s => s.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<RefreshToken>()
+                .HasIndex(t => t.TokenHash)
+                .IsUnique();
+
+            modelBuilder.Entity<RefreshToken>()
+                .HasIndex(t => new { t.UserId, t.RevokedAt });
+
+            modelBuilder.Entity<RefreshToken>()
+                .HasOne(t => t.User)
+                .WithMany()
+                .HasForeignKey(t => t.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
 
             // История стримов: User -> StreamsHistory (1:N)
@@ -123,6 +138,39 @@ namespace StreamPlatformBackend.Data
                 .WithMany()
                 .HasForeignKey(b => b.BannedByUserId)
                 .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<StreamChatMessage>()
+                .HasOne(m => m.Stream)
+                .WithMany()
+                .HasForeignKey(m => m.StreamId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<StreamChatMessage>()
+                .HasOne(m => m.Streamer)
+                .WithMany()
+                .HasForeignKey(m => m.StreamerId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<StreamChatMessage>()
+                .HasOne(m => m.User)
+                .WithMany()
+                .HasForeignKey(m => m.UserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<StreamChatMessage>()
+                .HasOne(m => m.DeletedByUser)
+                .WithMany()
+                .HasForeignKey(m => m.DeletedByUserId)
+                .OnDelete(DeleteBehavior.SetNull);
+
+            modelBuilder.Entity<StreamChatMessage>()
+                .HasIndex(m => new { m.StreamId, m.CreatedAt });
+
+            modelBuilder.Entity<StreamChatMessage>()
+                .HasIndex(m => new { m.StreamerId, m.CreatedAt });
+
+            modelBuilder.Entity<StreamChatMessage>()
+                .HasIndex(m => new { m.UserId, m.CreatedAt });
 
             modelBuilder.Entity<StreamChatModerationLog>()
                 .HasOne(l => l.Streamer)

@@ -30,7 +30,7 @@ namespace StreamPlatformBackend.Services.NotificationService
         /// </summary>
         public async Task SendToUserAsync(NotificationModel notification)
         {
-            await _hub.Clients.Group($"user_{notification.UserId}")
+            await _hub.Clients.Group(NotificationHub.UserGroup(notification.UserId))
                 .SendAsync("ReceiveNotification", new
                 {
                     Id = notification.Id,
