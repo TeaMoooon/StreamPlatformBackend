@@ -15,6 +15,7 @@ namespace StreamPlatformBackend.Data
 
         public DbSet<UserModel> Users { get; set; }
         public DbSet<RefreshToken> RefreshTokens { get; set; }
+        public DbSet<UserLoginHistory> UserLoginHistories { get; set; }
         public DbSet<SubscriptionModel> Subscriptions { get; set; }
         public DbSet<StreamModel> Streams { get; set; }
         public DbSet<StreamCategoryModel> StreamCategories { get; set; }
@@ -86,6 +87,15 @@ namespace StreamPlatformBackend.Data
                 .WithMany()
                 .HasForeignKey(t => t.UserId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<UserLoginHistory>()
+                .HasOne(h => h.User)
+                .WithMany()
+                .HasForeignKey(h => h.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<UserLoginHistory>()
+                .HasIndex(h => new { h.UserId, h.LoggedInAt });
 
             // История стримов: User -> StreamsHistory (1:N)
             modelBuilder.Entity<StreamModel>()

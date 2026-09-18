@@ -8,12 +8,14 @@ namespace StreamPlatformBackend.Services
 {
     public interface IJwtService
     {
-        string GenerateToken(UserModel user);
+        string GenerateToken(UserModel user, Guid sessionFamilyId);
         int AccessTokenSeconds { get; }
     }
 
     public class JwtService : IJwtService
     {
+        public const string SessionFamilyClaim = "sid";
+
         private readonly string _secretKey;
         private readonly string _issuer;
         private readonly string _audience;
@@ -29,9 +31,11 @@ namespace StreamPlatformBackend.Services
 
         public int AccessTokenSeconds => _accessTokenMinutes * 60;
 
-        public string GenerateToken(UserModel user)
+        public string GenerateToken(UserModel user, Guid sessionFamilyId)
         {
             if (user == null) throw new ArgumentNullException(nameof(user));
+            if (sessionFamilyId == Guid.Empty)
+                throw new ArgumentException("sessionFamilyId is required", nameof(sessionFamilyId));
 
             var role = string.IsNullOrWhiteSpace(user.Role) ? "User" : user.Role;
             var claims = new[]
@@ -39,10 +43,10 @@ namespace StreamPlatformBackend.Services
                 new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),
                 new Claim(ClaimTypes.Email, user.Email),
                 new Claim(ClaimTypes.Name, user.Nickname),
-                // Primary role claim used by IsInRole / [Authorize(Roles=...)]
                 new Claim(ClaimTypes.Role, role),
-                // Backward-compatible custom claim for older clients
-                new Claim("Role", role)
+                new Claim("Role", role),
+                // Ties access JWT to refresh-token session family — revoke kills access immediately.
+                new Claim(SessionFamilyClaim, sessionFamilyId.ToString("N"))
             };
 
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_secretKey));

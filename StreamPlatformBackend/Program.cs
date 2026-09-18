@@ -87,6 +87,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.AddScoped<IPasswordHasherService, PasswordHasherService>();
 builder.Services.AddScoped<IJwtService, JwtService>();
 builder.Services.AddScoped<IRefreshTokenService, RefreshTokenService>();
+builder.Services.AddScoped<ILoginHistoryService, LoginHistoryService>();
 builder.Services.AddScoped<IAuthCookieService, AuthCookieService>();
 builder.Services.AddScoped<INotificationRepository, NotificationRepository>();
 builder.Services.AddScoped<INotificationSender, NotificationSender>();
@@ -220,6 +221,8 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
 
         // Resolve JWT from (1) Authorization header (default), (2) HttpOnly cookie, (3) SignalR query.
+        // After signature validation, require the session family (sid) to still be active —
+        // otherwise remote logout would leave access JWT usable until expiry.
         options.Events = new JwtBearerEvents
         {
             OnMessageReceived = context =>
@@ -242,6 +245,22 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 }
 
                 return Task.CompletedTask;
+            },
+            OnTokenValidated = async context =>
+            {
+                var sidValue = context.Principal?.FindFirst(JwtService.SessionFamilyClaim)?.Value;
+                if (string.IsNullOrWhiteSpace(sidValue) || !Guid.TryParseExact(sidValue, "N", out var familyId))
+                {
+                    // Force re-login so every access JWT carries a revocable session id.
+                    context.Fail("Session claim missing — please sign in again");
+                    return;
+                }
+
+                var refreshTokens = context.HttpContext.RequestServices.GetRequiredService<IRefreshTokenService>();
+                if (!await refreshTokens.IsSessionFamilyActiveAsync(familyId))
+                {
+                    context.Fail("Session has been revoked");
+                }
             }
         };
     });

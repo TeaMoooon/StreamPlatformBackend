@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using StreamPlatformBackend.Data;
@@ -12,9 +13,11 @@ using StreamPlatformBackend.Data;
 namespace StreamPlatformBackend.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260916192022_Add_UserLoginHistory")]
+    partial class Add_UserLoginHistory
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -693,25 +696,7 @@ namespace StreamPlatformBackend.Migrations
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
-                    b.Property<string>("DeviceCategory")
-                        .IsRequired()
-                        .HasMaxLength(16)
-                        .HasColumnType("character varying(16)");
-
-                    b.Property<string>("DeviceLabel")
-                        .IsRequired()
-                        .HasMaxLength(96)
-                        .HasColumnType("character varying(96)");
-
                     b.Property<DateTime>("ExpiresAt")
-                        .HasColumnType("timestamp with time zone");
-
-                    b.Property<string>("IpAddress")
-                        .IsRequired()
-                        .HasMaxLength(64)
-                        .HasColumnType("character varying(64)");
-
-                    b.Property<DateTime>("LastSeenAt")
                         .HasColumnType("timestamp with time zone");
 
                     b.Property<string>("ReplacedByTokenHash")
@@ -720,9 +705,6 @@ namespace StreamPlatformBackend.Migrations
 
                     b.Property<DateTime?>("RevokedAt")
                         .HasColumnType("timestamp with time zone");
-
-                    b.Property<Guid>("SessionFamilyId")
-                        .HasColumnType("uuid");
 
                     b.Property<string>("TokenHash")
                         .IsRequired()
@@ -778,8 +760,8 @@ namespace StreamPlatformBackend.Migrations
 
                     b.Property<string>("DeviceType")
                         .IsRequired()
-                        .HasMaxLength(96)
-                        .HasColumnType("character varying(96)");
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
 
                     b.Property<string>("IpAddress")
                         .IsRequired()

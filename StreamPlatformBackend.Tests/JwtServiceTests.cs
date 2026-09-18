@@ -40,8 +40,8 @@ namespace StreamPlatformBackend.Tests
                 Role = UserRole.User
             };
 
-            // Act
-            var tokenString = service.GenerateToken(user);
+            var familyId = Guid.Parse("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+            var tokenString = service.GenerateToken(user, familyId);
 
             // Assert
             Assert.False(string.IsNullOrWhiteSpace(tokenString));
@@ -53,13 +53,14 @@ namespace StreamPlatformBackend.Tests
             Assert.Contains(token.Claims, c => c.Type == ClaimTypes.Email && c.Value == "test@example.com");
             Assert.Contains(token.Claims, c => c.Type == ClaimTypes.Name && c.Value == "tester");
             Assert.Contains(token.Claims, c => c.Type == "Role" && c.Value == "User");
+            Assert.Contains(token.Claims, c => c.Type == JwtService.SessionFamilyClaim && c.Value == familyId.ToString("N"));
         }
 
         [Fact]
         public void GenerateToken_NullUser_ShouldThrowArgumentNullException()
         {
             var service = new JwtService(_configuration);
-            Assert.Throws<ArgumentNullException>(() => service.GenerateToken(null));
+            Assert.Throws<ArgumentNullException>(() => service.GenerateToken(null!, Guid.NewGuid()));
         }
 
         [Fact]
@@ -91,7 +92,7 @@ namespace StreamPlatformBackend.Tests
                 Email = "a@b.c",
                 Nickname = "n",
                 Role = UserRole.User
-            });
+            }, Guid.NewGuid());
 
             var token = new JwtSecurityTokenHandler().ReadJwtToken(tokenString);
             var remainingMinutes = (token.ValidTo - DateTime.UtcNow).TotalMinutes;

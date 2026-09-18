@@ -13,8 +13,13 @@ namespace StreamPlatformBackend.Services
 {
     public interface ISettingsService 
     {
-        // User settings
-        Task UpdateUserProfileAsync(int userId, UserUpdateDataDto dto);
+        /// <summary>Обновление профиля пользователя.</summary>
+        /// <param name="userId">Id пользователя.</param>
+        /// <param name="dto">Данные профиля.</param>
+        /// <param name="keepRefreshToken">
+        /// После смены пароля все сеансы кроме этого refresh отзываются.
+        /// </param>
+        Task UpdateUserProfileAsync(int userId, UserUpdateDataDto dto, string? keepRefreshToken = null);
         Task<string> RegenerateStreamKeyAsync(int userId);
         
         // Stream settings
@@ -29,6 +34,7 @@ namespace StreamPlatformBackend.Services
     {
         private readonly AppDbContext _context;
         private readonly IPasswordHasherService _passwordHasher;
+        private readonly IRefreshTokenService _refreshTokens;
         private readonly ILogger<SettingsService> _logger;
         private readonly ICatalogCache _catalogCache;
         private readonly IImageUploadValidator _imageUploadValidator;
@@ -37,10 +43,12 @@ namespace StreamPlatformBackend.Services
                                IPasswordHasherService passwordHasher, INotificationRepository notificationRepository, 
                                INotificationSender notificationSender, ILogger<SettingsService> logger,
                                ICatalogCache catalogCache,
-                               IImageUploadValidator imageUploadValidator)
+                               IImageUploadValidator imageUploadValidator,
+                               IRefreshTokenService refreshTokens)
         {
             _context = context;
             _passwordHasher = passwordHasher;
+            _refreshTokens = refreshTokens;
             _logger = logger;
             _mediaPath = configuration["Media:Path"];
             _catalogCache = catalogCache;
@@ -50,7 +58,7 @@ namespace StreamPlatformBackend.Services
         // ==================================================
         // User settings
         // ==================================================
-        public async Task UpdateUserProfileAsync(int userId, UserUpdateDataDto dto)
+        public async Task UpdateUserProfileAsync(int userId, UserUpdateDataDto dto, string? keepRefreshToken = null)
         {
             try
             {
@@ -64,12 +72,13 @@ namespace StreamPlatformBackend.Services
                 var previousNickname = user.Nickname;
                 bool hasChanges = false;
 
-                hasChanges |= await UpdateEmailAsync(user, dto.Email);
+                hasChanges |= await UpdateEmailAsync(user, dto.Email, dto.CurrentPassword);
                 hasChanges |= await UpdateNicknameAsync(user, dto.Nickname);
                 hasChanges |= UpdateProfileDescription(user, dto.ProfileDescription);
                 hasChanges |= UpdateSocialLinks(user, dto.SocialLinks);
                 hasChanges |= UpdateRecordEnabled(user, dto.RecordEnabled);
-                hasChanges |= await UpdatePasswordAsync(user, dto.CurrentPassword, dto.NewPassword);
+                var passwordChanged = await UpdatePasswordAsync(user, dto.CurrentPassword, dto.NewPassword);
+                hasChanges |= passwordChanged;
 
                 // Файлы
                 if (dto.ProfileImage != null)
@@ -88,6 +97,24 @@ namespace StreamPlatformBackend.Services
                 {
                     await _context.SaveChangesAsync();
                     await InvalidateCatalogAsync(userId, previousNickname, user.Nickname);
+                }
+
+                if (passwordChanged)
+                {
+                    if (!string.IsNullOrWhiteSpace(keepRefreshToken))
+                    {
+                        await _refreshTokens.RevokeAllExceptAsync(userId, keepRefreshToken);
+                        _logger.LogInformation(
+                            "Password changed for user {UserId}: other sessions revoked",
+                            userId);
+                    }
+                    else
+                    {
+                        await _refreshTokens.RevokeAllForUserAsync(userId);
+                        _logger.LogWarning(
+                            "Password changed for user {UserId} without current refresh cookie — all sessions revoked",
+                            userId);
+                    }
                 }
             }
             catch (Exception ex)
@@ -139,10 +166,16 @@ namespace StreamPlatformBackend.Services
 
         // ============== User private methods=========
 
-        private async Task<bool> UpdateEmailAsync(UserModel user, string? email)
+        private async Task<bool> UpdateEmailAsync(UserModel user, string? email, string? currentPassword)
         {
             if (string.IsNullOrEmpty(email) || user.Email == email.ToLower())
                 return false;
+
+            if (string.IsNullOrEmpty(currentPassword))
+                throw new ArgumentException("Текущий пароль обязателен для смены почты");
+
+            if (!_passwordHasher.VerifyPassword(currentPassword, user.PasswordHash))
+                throw new ArgumentException("Текущий пароль неверен");
 
             if (!IsValidEmail(email))
                 throw new ArgumentException("Неверный формат email");

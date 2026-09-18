@@ -32,7 +32,7 @@ namespace StreamPlatformBackend.Tests
                     ["Jwt:Issuer"] = "TestIssuer",
                     ["Jwt:Audience"] = "TestAudience",
                     ["Jwt:AccessTokenMinutes"] = "30",
-                    ["Jwt:RefreshTokenDays"] = "30"
+                    ["Jwt:RefreshTokenDays"] = "60"
                 })
                 .Build();
 
@@ -105,7 +105,7 @@ namespace StreamPlatformBackend.Tests
         }
 
         [Fact]
-        public async Task RotateAsync_ReuseOfRevokedToken_ShouldRevokeAllSessions()
+        public async Task RotateAsync_ReuseOfRotatedToken_ShouldRevokeAllSessions()
         {
             var (service, db, _) = Create();
             await using (db)
@@ -124,6 +124,27 @@ namespace StreamPlatformBackend.Tests
                 // Even the latest legitimate refresh is now dead.
                 var afterCompromise = await service.RotateAsync(second!.RefreshToken);
                 Assert.Null(afterCompromise);
+            }
+        }
+
+        [Fact]
+        public async Task RotateAsync_ReuseAfterExplicitRevoke_ShouldNotKillOtherSessions()
+        {
+            var (service, db, _) = Create();
+            await using (db)
+            {
+                var user = SeedUser(db);
+                var chrome = await service.IssueAsync(user);
+                var edge = await service.IssueAsync(user);
+
+                await service.RevokeAllExceptAsync(user.Id, chrome.RefreshToken);
+
+                // Edge tries to refresh with its explicitly revoked token.
+                Assert.Null(await service.RotateAsync(edge.RefreshToken));
+
+                // Chrome must still be alive — unlike reuse-after-rotation, no nuke.
+                Assert.Single(await service.GetActiveSessionsAsync(user.Id));
+                Assert.NotNull(await service.RotateAsync(chrome.RefreshToken));
             }
         }
 
@@ -154,6 +175,103 @@ namespace StreamPlatformBackend.Tests
 
                 Assert.Null(await service.RotateAsync(pair.RefreshToken));
                 Assert.NotNull((await db.RefreshTokens.SingleAsync()).RevokedAt);
+            }
+        }
+
+        [Fact]
+        public async Task IssueAsync_ShouldStoreClientMetadataAndFamily()
+        {
+            var (service, db, _) = Create();
+            await using (db)
+            {
+                var user = SeedUser(db);
+                var client = new SessionClientInfo
+                {
+                    IpAddress = "203.0.113.10",
+                    DeviceLabel = "Chrome · Windows",
+                    DeviceCategory = "Desktop"
+                };
+
+                var pair = await service.IssueAsync(user, client);
+                var stored = Assert.Single(db.RefreshTokens);
+
+                Assert.Equal(pair.SessionId, stored.Id);
+                Assert.Equal("203.0.113.10", stored.IpAddress);
+                Assert.Equal("Chrome · Windows", stored.DeviceLabel);
+                Assert.Equal("Desktop", stored.DeviceCategory);
+                Assert.NotEqual(Guid.Empty, stored.SessionFamilyId);
+            }
+        }
+
+        [Fact]
+        public async Task RotateAsync_ShouldPreserveFamilyAndCreatedAt()
+        {
+            var (service, db, _) = Create();
+            await using (db)
+            {
+                var user = SeedUser(db);
+                var first = await service.IssueAsync(user, new SessionClientInfo
+                {
+                    IpAddress = "1.1.1.1",
+                    DeviceLabel = "Safari · iPhone",
+                    DeviceCategory = "Mobile"
+                });
+
+                var original = await db.RefreshTokens.SingleAsync();
+                var family = original.SessionFamilyId;
+                var created = original.CreatedAt;
+
+                await Task.Delay(20);
+                var second = await service.RotateAsync(first.RefreshToken);
+                Assert.NotNull(second);
+
+                var active = Assert.Single(db.RefreshTokens.Where(t => t.RevokedAt == null));
+                Assert.Equal(family, active.SessionFamilyId);
+                Assert.Equal(created, active.CreatedAt);
+                Assert.Equal("Safari · iPhone", active.DeviceLabel);
+                Assert.True(active.LastSeenAt >= created);
+            }
+        }
+
+        [Fact]
+        public async Task RevokeAllExceptAsync_ShouldKeepCurrentSession()
+        {
+            var (service, db, _) = Create();
+            await using (db)
+            {
+                var user = SeedUser(db);
+                var a = await service.IssueAsync(user);
+                var b = await service.IssueAsync(user);
+
+                await service.RevokeAllExceptAsync(user.Id, a.RefreshToken);
+
+                var tokens = db.RefreshTokens.OrderBy(t => t.Id).ToList();
+                Assert.Null(tokens[0].RevokedAt);
+                Assert.NotNull(tokens[1].RevokedAt);
+                Assert.Single(await service.GetActiveSessionsAsync(user.Id));
+                Assert.NotNull(await service.RotateAsync(a.RefreshToken));
+            }
+        }
+
+        [Fact]
+        public async Task RevokeById_ShouldMakeSessionFamilyInactive()
+        {
+            var (service, db, _) = Create();
+            await using (db)
+            {
+                var user = SeedUser(db);
+                var pair = await service.IssueAsync(user, new SessionClientInfo
+                {
+                    IpAddress = "1.2.3.4",
+                    DeviceLabel = "Edge · Windows",
+                    DeviceCategory = "Desktop"
+                });
+
+                var family = (await db.RefreshTokens.SingleAsync()).SessionFamilyId;
+                Assert.True(await service.IsSessionFamilyActiveAsync(family));
+
+                Assert.True(await service.RevokeByIdForUserAsync(user.Id, pair.SessionId));
+                Assert.False(await service.IsSessionFamilyActiveAsync(family));
             }
         }
     }

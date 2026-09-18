@@ -26,7 +26,12 @@ namespace StreamPlatformBackend.Tests
             0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
         };
 
-        private static SettingsService CreateService(AppDbContext db, string mediaPath, long? maxBytes = null)
+        private static SettingsService CreateService(
+            AppDbContext db,
+            string mediaPath,
+            long? maxBytes = null,
+            IPasswordHasherService? passwordHasher = null,
+            IRefreshTokenService? refreshTokens = null)
         {
             var values = new Dictionary<string, string?>
             {
@@ -47,12 +52,13 @@ namespace StreamPlatformBackend.Tests
             return new SettingsService(
                 db,
                 config,
-                Mock.Of<IPasswordHasherService>(),
+                passwordHasher ?? Mock.Of<IPasswordHasherService>(),
                 Mock.Of<INotificationRepository>(),
                 Mock.Of<INotificationSender>(),
                 NullLogger<SettingsService>.Instance,
                 catalogCache.Object,
-                new ImageUploadValidator(config));
+                new ImageUploadValidator(config),
+                refreshTokens ?? Mock.Of<IRefreshTokenService>());
         }
 
         private static DbContextOptions<AppDbContext> CreateDbOptions()
@@ -257,6 +263,45 @@ namespace StreamPlatformBackend.Tests
                 if (Directory.Exists(mediaPath))
                     Directory.Delete(mediaPath, recursive: true);
             }
+        }
+
+        [Fact]
+        public async Task UpdateUserProfileAsync_ShouldRevokeOtherSessions_WhenPasswordChanged()
+        {
+            var mediaPath = Path.Combine(Path.GetTempPath(), $"media_{Guid.NewGuid():N}");
+            await using var db = new AppDbContext(CreateDbOptions());
+            db.Users.Add(new UserModel
+            {
+                Id = 11,
+                Email = "pw@example.com",
+                Nickname = "pwuser",
+                Role = UserRole.User,
+                PasswordHash = "old-hash"
+            });
+            await db.SaveChangesAsync();
+
+            var hasher = new Mock<IPasswordHasherService>(MockBehavior.Strict);
+            hasher.Setup(h => h.VerifyPassword("old-pass", "old-hash")).Returns(true);
+            hasher.Setup(h => h.HashPassword("new-pass-123")).Returns("new-hash");
+
+            var refresh = new Mock<IRefreshTokenService>(MockBehavior.Strict);
+            refresh
+                .Setup(r => r.RevokeAllExceptAsync(11, "keep-refresh", It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+
+            var service = CreateService(db, mediaPath, passwordHasher: hasher.Object, refreshTokens: refresh.Object);
+            await service.UpdateUserProfileAsync(
+                11,
+                new UserUpdateDataDto { CurrentPassword = "old-pass", NewPassword = "new-pass-123" },
+                keepRefreshToken: "keep-refresh");
+
+            Assert.Equal("new-hash", (await db.Users.SingleAsync(u => u.Id == 11)).PasswordHash);
+            refresh.Verify(
+                r => r.RevokeAllExceptAsync(11, "keep-refresh", It.IsAny<CancellationToken>()),
+                Times.Once);
+            refresh.Verify(
+                r => r.RevokeAllForUserAsync(It.IsAny<int>(), It.IsAny<CancellationToken>()),
+                Times.Never);
         }
 
         [Fact]

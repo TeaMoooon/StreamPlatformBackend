@@ -18,6 +18,7 @@ namespace StreamPlatformBackend.Controllers
         private readonly IUserService _userService;
         private readonly ILogger<UsersController> _logger;
         private readonly IRefreshTokenService _refreshTokenService;
+        private readonly ILoginHistoryService _loginHistory;
         private readonly IAuthCookieService _authCookies;
         private readonly IStreamService _streamService;
         private readonly IPlatformSanctionService _platformSanctions;
@@ -28,6 +29,7 @@ namespace StreamPlatformBackend.Controllers
             IUserService userService,
             IStreamService streamService,
             IRefreshTokenService refreshTokenService,
+            ILoginHistoryService loginHistory,
             IAuthCookieService authCookies,
             IPlatformSanctionService platformSanctions,
             ICatalogCache catalogCache,
@@ -35,6 +37,7 @@ namespace StreamPlatformBackend.Controllers
         {
             _userService = userService;
             _refreshTokenService = refreshTokenService;
+            _loginHistory = loginHistory;
             _authCookies = authCookies;
             _logger = logger;
             _streamService = streamService;
@@ -106,8 +109,14 @@ namespace StreamPlatformBackend.Controllers
                 });
             }
 
-            var pair = await _refreshTokenService.IssueAsync(user);
+            var client = SessionClientInfo.FromRequest(Request);
+            var pair = await _refreshTokenService.IssueAsync(user, client);
             _authCookies.AppendAuthCookies(Response, Request, pair);
+
+            await _loginHistory.RecordSuccessfulLoginAsync(
+                user.Id,
+                client.IpAddress,
+                client.DeviceLabel);
 
             // Tokens stay in HttpOnly cookies — never expose them to JS.
             return Ok(new
@@ -132,7 +141,9 @@ namespace StreamPlatformBackend.Controllers
             if (string.IsNullOrWhiteSpace(refreshToken))
                 return BadRequest(new { message = "Refresh token is required" });
 
-            var pair = await _refreshTokenService.RotateAsync(refreshToken);
+            var pair = await _refreshTokenService.RotateAsync(
+                refreshToken,
+                SessionClientInfo.FromRequest(Request));
             if (pair == null)
             {
                 _authCookies.ClearAuthCookies(Response, Request);

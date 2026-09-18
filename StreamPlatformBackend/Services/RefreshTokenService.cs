@@ -12,14 +12,20 @@ namespace StreamPlatformBackend.Services
         public string AccessToken { get; init; } = string.Empty;
         public string RefreshToken { get; init; } = string.Empty;
         public int ExpiresInSeconds { get; init; }
+        public long SessionId { get; init; }
     }
 
     public interface IRefreshTokenService
     {
-        Task<AuthTokenPair> IssueAsync(UserModel user, CancellationToken ct = default);
-        Task<AuthTokenPair?> RotateAsync(string rawRefreshToken, CancellationToken ct = default);
+        Task<AuthTokenPair> IssueAsync(UserModel user, SessionClientInfo? client = null, CancellationToken ct = default);
+        Task<AuthTokenPair?> RotateAsync(string rawRefreshToken, SessionClientInfo? client = null, CancellationToken ct = default);
         Task RevokeAsync(string rawRefreshToken, CancellationToken ct = default);
+        Task<bool> RevokeByIdForUserAsync(int userId, long sessionId, CancellationToken ct = default);
         Task RevokeAllForUserAsync(int userId, CancellationToken ct = default);
+        Task RevokeAllExceptAsync(int userId, string? keepRawRefreshToken, CancellationToken ct = default);
+        Task<IReadOnlyList<RefreshToken>> GetActiveSessionsAsync(int userId, CancellationToken ct = default);
+        long? FindActiveSessionId(string? rawRefreshToken);
+        Task<bool> IsSessionFamilyActiveAsync(Guid sessionFamilyId, CancellationToken ct = default);
     }
 
     public class RefreshTokenService : IRefreshTokenService
@@ -42,26 +48,32 @@ namespace StreamPlatformBackend.Services
         }
 
         private int RefreshTokenDays =>
-            Math.Max(1, _configuration.GetValue("Jwt:RefreshTokenDays", 30));
+            Math.Max(1, _configuration.GetValue("Jwt:RefreshTokenDays", 60));
 
-        public async Task<AuthTokenPair> IssueAsync(UserModel user, CancellationToken ct = default)
+        public async Task<AuthTokenPair> IssueAsync(UserModel user, SessionClientInfo? client = null, CancellationToken ct = default)
         {
+            var now = DateTime.UtcNow;
             var raw = GenerateRawToken();
             var entity = new RefreshToken
             {
                 UserId = user.Id,
                 TokenHash = HashToken(raw),
-                CreatedAt = DateTime.UtcNow,
-                ExpiresAt = DateTime.UtcNow.AddDays(RefreshTokenDays)
+                SessionFamilyId = Guid.NewGuid(),
+                CreatedAt = now,
+                LastSeenAt = now,
+                ExpiresAt = now.AddDays(RefreshTokenDays),
+                IpAddress = client?.IpAddress ?? "unknown",
+                DeviceLabel = client?.DeviceLabel ?? "Неизвестно",
+                DeviceCategory = client?.DeviceCategory ?? "Unknown"
             };
 
             _db.RefreshTokens.Add(entity);
             await _db.SaveChangesAsync(ct);
 
-            return BuildPair(user, raw);
+            return BuildPair(user, raw, entity.Id, entity.SessionFamilyId);
         }
 
-        public async Task<AuthTokenPair?> RotateAsync(string rawRefreshToken, CancellationToken ct = default)
+        public async Task<AuthTokenPair?> RotateAsync(string rawRefreshToken, SessionClientInfo? client = null, CancellationToken ct = default)
         {
             if (string.IsNullOrWhiteSpace(rawRefreshToken))
                 return null;
@@ -79,9 +91,22 @@ namespace StreamPlatformBackend.Services
 
             if (existing.RevokedAt != null)
             {
-                // Possible reuse after theft — revoke all sessions for this user.
-                _logger.LogWarning("Refresh token reuse detected for user {UserId}", existing.UserId);
-                await RevokeAllForUserAsync(existing.UserId, ct);
+                // Only rotated tokens (replaced by a successor) imply theft on reuse.
+                // Explicit logout / "revoke others" leaves ReplacedByTokenHash null — just reject.
+                if (!string.IsNullOrEmpty(existing.ReplacedByTokenHash))
+                {
+                    _logger.LogWarning(
+                        "Refresh token reuse after rotation for user {UserId} — revoking all sessions",
+                        existing.UserId);
+                    await RevokeAllForUserAsync(existing.UserId, ct);
+                }
+                else
+                {
+                    _logger.LogInformation(
+                        "Refresh token presented after explicit revoke for user {UserId}",
+                        existing.UserId);
+                }
+
                 return null;
             }
 
@@ -92,22 +117,29 @@ namespace StreamPlatformBackend.Services
                 return null;
             }
 
+            var now = DateTime.UtcNow;
             var newRaw = GenerateRawToken();
             var newHash = HashToken(newRaw);
 
-            existing.RevokedAt = DateTime.UtcNow;
+            existing.RevokedAt = now;
             existing.ReplacedByTokenHash = newHash;
 
-            _db.RefreshTokens.Add(new RefreshToken
+            var replacement = new RefreshToken
             {
                 UserId = existing.UserId,
                 TokenHash = newHash,
-                CreatedAt = DateTime.UtcNow,
-                ExpiresAt = DateTime.UtcNow.AddDays(RefreshTokenDays)
-            });
+                SessionFamilyId = existing.SessionFamilyId,
+                CreatedAt = existing.CreatedAt,
+                LastSeenAt = now,
+                ExpiresAt = now.AddDays(RefreshTokenDays),
+                IpAddress = client?.IpAddress ?? existing.IpAddress,
+                DeviceLabel = client?.DeviceLabel ?? existing.DeviceLabel,
+                DeviceCategory = client?.DeviceCategory ?? existing.DeviceCategory
+            };
 
+            _db.RefreshTokens.Add(replacement);
             await _db.SaveChangesAsync(ct);
-            return BuildPair(existing.User, newRaw);
+            return BuildPair(existing.User, newRaw, replacement.Id, replacement.SessionFamilyId);
         }
 
         public async Task RevokeAsync(string rawRefreshToken, CancellationToken ct = default)
@@ -122,6 +154,28 @@ namespace StreamPlatformBackend.Services
 
             existing.RevokedAt = DateTime.UtcNow;
             await _db.SaveChangesAsync(ct);
+        }
+
+        public async Task<bool> RevokeByIdForUserAsync(int userId, long sessionId, CancellationToken ct = default)
+        {
+            var existing = await _db.RefreshTokens
+                .FirstOrDefaultAsync(t => t.Id == sessionId && t.UserId == userId, ct);
+
+            if (existing == null || existing.RevokedAt != null)
+                return false;
+
+            // Kill the whole rotation family so any sibling leaf cannot linger.
+            var familyId = existing.SessionFamilyId;
+            var now = DateTime.UtcNow;
+            var family = await _db.RefreshTokens
+                .Where(t => t.UserId == userId && t.SessionFamilyId == familyId && t.RevokedAt == null)
+                .ToListAsync(ct);
+
+            foreach (var token in family)
+                token.RevokedAt = now;
+
+            await _db.SaveChangesAsync(ct);
+            return true;
         }
 
         public async Task RevokeAllForUserAsync(int userId, CancellationToken ct = default)
@@ -140,15 +194,83 @@ namespace StreamPlatformBackend.Services
             await _db.SaveChangesAsync(ct);
         }
 
-        private AuthTokenPair BuildPair(UserModel user, string rawRefreshToken)
+        public async Task RevokeAllExceptAsync(int userId, string? keepRawRefreshToken, CancellationToken ct = default)
         {
-            var access = _jwtService.GenerateToken(user);
+            if (string.IsNullOrWhiteSpace(keepRawRefreshToken))
+                throw new ArgumentException("Current refresh token is required to revoke other sessions");
+
+            var keepHash = HashToken(keepRawRefreshToken.Trim());
+
+            var active = await _db.RefreshTokens
+                .Where(t => t.UserId == userId && t.RevokedAt == null)
+                .ToListAsync(ct);
+
+            if (!active.Any(t => t.TokenHash == keepHash))
+                throw new InvalidOperationException("Current session refresh token is not active");
+
+            var now = DateTime.UtcNow;
+            var changed = false;
+            foreach (var token in active)
+            {
+                if (token.TokenHash == keepHash)
+                    continue;
+                token.RevokedAt = now;
+                changed = true;
+            }
+
+            if (changed)
+                await _db.SaveChangesAsync(ct);
+        }
+
+        public async Task<IReadOnlyList<RefreshToken>> GetActiveSessionsAsync(int userId, CancellationToken ct = default)
+        {
+            var now = DateTime.UtcNow;
+            return await _db.RefreshTokens
+                .AsNoTracking()
+                .Where(t => t.UserId == userId && t.RevokedAt == null && t.ExpiresAt > now)
+                .OrderByDescending(t => t.LastSeenAt)
+                .ToListAsync(ct);
+        }
+
+        public long? FindActiveSessionId(string? rawRefreshToken)
+        {
+            if (string.IsNullOrWhiteSpace(rawRefreshToken))
+                return null;
+
+            var hash = HashToken(rawRefreshToken.Trim());
+            var now = DateTime.UtcNow;
+            return _db.RefreshTokens
+                .AsNoTracking()
+                .Where(t => t.TokenHash == hash && t.RevokedAt == null && t.ExpiresAt > now)
+                .Select(t => (long?)t.Id)
+                .FirstOrDefault();
+        }
+
+        public async Task<bool> IsSessionFamilyActiveAsync(Guid sessionFamilyId, CancellationToken ct = default)
+        {
+            if (sessionFamilyId == Guid.Empty)
+                return false;
+
+            var now = DateTime.UtcNow;
+            return await _db.RefreshTokens
+                .AsNoTracking()
+                .AnyAsync(
+                    t => t.SessionFamilyId == sessionFamilyId
+                         && t.RevokedAt == null
+                         && t.ExpiresAt > now,
+                    ct);
+        }
+
+        private AuthTokenPair BuildPair(UserModel user, string rawRefreshToken, long sessionId, Guid sessionFamilyId)
+        {
+            var access = _jwtService.GenerateToken(user, sessionFamilyId);
             return new AuthTokenPair
             {
                 UserId = user.Id,
                 AccessToken = access,
                 RefreshToken = rawRefreshToken,
-                ExpiresInSeconds = _jwtService.AccessTokenSeconds
+                ExpiresInSeconds = _jwtService.AccessTokenSeconds,
+                SessionId = sessionId
             };
         }
 
