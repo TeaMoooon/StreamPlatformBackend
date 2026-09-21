@@ -367,3 +367,7 @@ appsettings.Local.json
 **/appsettings.Secrets.json
 deploy/ubuntu/backend.env
 **/rtmp-callback-secret.conf
+
+# Local Cursor / deploy notes (not for GitHub)
+.cursor/
+deploy/ubuntu/UPDATE-FROM-GITHUB.md
