@@ -19,6 +19,8 @@ namespace StreamPlatformBackend.Services
         Task SetSlowModeSecondsAsync(int streamerId, int seconds);
         Task<string> GetChatRulesAsync(int streamerId);
         Task SetChatRulesAsync(int streamerId, string rules);
+        Task<string> GetChatRulesTitleAsync(int streamerId);
+        Task SetChatRulesTitleAsync(int streamerId, string title);
         Task<string> GetChatModeAsync(int streamerId);
         Task SetChatModeAsync(int streamerId, string mode);
         Task<int?> CheckSlowModeAsync(int streamerId, int userId, bool bypassSlowMode);
@@ -52,6 +54,7 @@ namespace StreamPlatformBackend.Services
         private string GetAssistantsKey(int streamerId) => $"stream:{streamerId}:assistants";
         private string GetSlowModeKey(int streamerId) => $"chat:{streamerId}:settings:slowmode";
         private string GetChatRulesKey(int streamerId) => $"chat:{streamerId}:settings:rules";
+        private string GetChatRulesTitleKey(int streamerId) => $"chat:{streamerId}:settings:rules_title";
         private string GetChatModeKey(int streamerId) => $"chat:{streamerId}:settings:mode";
         private string GetLastMessageKey(int streamerId, int userId) => $"chat:{streamerId}:lastmsg:{userId}";
         private string GetTimeoutKey(int streamerId, int userId) => $"chat:{streamerId}:timeout:{userId}";
@@ -142,9 +145,30 @@ namespace StreamPlatformBackend.Services
                 rules = rules[..ChatConstants.MaxChatRulesLength];
 
             if (string.IsNullOrEmpty(rules))
+            {
                 await _db.KeyDeleteAsync(GetChatRulesKey(streamerId));
+                await _db.KeyDeleteAsync(GetChatRulesTitleKey(streamerId));
+            }
             else
                 await _db.StringSetAsync(GetChatRulesKey(streamerId), rules);
+        }
+
+        public async Task<string> GetChatRulesTitleAsync(int streamerId)
+        {
+            var value = await _db.StringGetAsync(GetChatRulesTitleKey(streamerId));
+            return value.HasValue ? value.ToString() : string.Empty;
+        }
+
+        public async Task SetChatRulesTitleAsync(int streamerId, string title)
+        {
+            title = (title ?? string.Empty).Trim();
+            if (title.Length > ChatConstants.MaxChatRulesTitleLength)
+                title = title[..ChatConstants.MaxChatRulesTitleLength];
+
+            if (string.IsNullOrEmpty(title))
+                await _db.KeyDeleteAsync(GetChatRulesTitleKey(streamerId));
+            else
+                await _db.StringSetAsync(GetChatRulesTitleKey(streamerId), title);
         }
 
         public async Task<string> GetChatModeAsync(int streamerId)

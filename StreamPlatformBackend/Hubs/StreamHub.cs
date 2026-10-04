@@ -355,9 +355,10 @@ namespace StreamPlatformBackend.Hubs
                 }
 
                 var chatRules = await _redisChatService.GetChatRulesAsync(streamerId);
+                var chatRulesTitle = await _redisChatService.GetChatRulesTitleAsync(streamerId);
                 var chatMode = await _redisChatService.GetChatModeAsync(streamerId);
                 await Clients.Group($"stream_{streamerId}")
-                    .SendAsync("ChatSettingsChanged", new { slowModeSeconds = seconds, chatRules, chatMode });
+                    .SendAsync("ChatSettingsChanged", new { slowModeSeconds = seconds, chatRules, chatRulesTitle, chatMode });
             }
             catch (Exception ex)
             {
@@ -674,6 +675,7 @@ namespace StreamPlatformBackend.Hubs
             var nicknames = await _userService.GetNicknamesByIdsAsync(messages.Select(m => m.UserId));
             var slowModeSeconds = await _redisChatService.GetSlowModeSecondsAsync(info.StreamerId);
             var chatRules = await _redisChatService.GetChatRulesAsync(info.StreamerId);
+            var chatRulesTitle = await _redisChatService.GetChatRulesTitleAsync(info.StreamerId);
             var chatMode = await _redisChatService.GetChatModeAsync(info.StreamerId);
             var canManageChat = await CanManageChatAsync(userId, info.StreamerId);
             var canSendChat = await CanSendChatAsync(userId, info.StreamerId, canManageChat, chatMode);
@@ -686,6 +688,7 @@ namespace StreamPlatformBackend.Hubs
             {
                 slowModeSeconds,
                 chatRules,
+                chatRulesTitle,
                 chatMode,
                 canManageChat,
                 canSendChat,

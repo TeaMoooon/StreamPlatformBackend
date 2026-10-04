@@ -317,7 +317,7 @@ namespace StreamPlatformBackend.Controllers
         /// <response code="404">Пользователь не найден.</response>
         [Authorize]
         [HttpGet("stream-key")]
-        [EnableRateLimiting("sensitive")]
+        [EnableRateLimiting("sensitive_read")]
         public async Task<IActionResult> GetMyStreamKey()
         {
             try

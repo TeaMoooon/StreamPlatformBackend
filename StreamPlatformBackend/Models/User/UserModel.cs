@@ -65,9 +65,6 @@ namespace StreamPlatformBackend.Models.User
 
         public string StreamLanguage { get; set; } = "ru";
 
-        [MaxLength(500)]
-        public string StreamAnnouncement { get; set; } = string.Empty;
-
         // Стример → список модераторов
         [JsonIgnore]
         public virtual ICollection<StreamModerator> Moderators { get; set; } = new HashSet<StreamModerator>();

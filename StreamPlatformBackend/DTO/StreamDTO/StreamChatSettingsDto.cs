@@ -6,6 +6,7 @@ namespace StreamPlatformBackend.DTO.StreamDTO
     {
         public int SlowModeSeconds { get; set; }
         public string ChatRules { get; set; } = string.Empty;
+        public string ChatRulesTitle { get; set; } = string.Empty;
         public string ChatMode { get; set; } = ChatModes.Normal;
     }
 
@@ -13,6 +14,7 @@ namespace StreamPlatformBackend.DTO.StreamDTO
     {
         public int? SlowModeSeconds { get; set; }
         public string? ChatRules { get; set; }
+        public string? ChatRulesTitle { get; set; }
         public string? ChatMode { get; set; }
     }
 
@@ -36,7 +38,6 @@ namespace StreamPlatformBackend.DTO.StreamDTO
         public string? CategoryName { get; set; }
         public List<string> Tags { get; set; } = new();
         public string Language { get; set; } = "ru";
-        public string Announcement { get; set; } = string.Empty;
         public string? PreviewUrl { get; set; }
         public bool IsLive { get; set; }
         public int SubscriberCount { get; set; }
@@ -49,6 +50,5 @@ namespace StreamPlatformBackend.DTO.StreamDTO
         public int? CategoryId { get; set; }
         public List<string>? Tags { get; set; }
         public string? Language { get; set; }
-        public string? Announcement { get; set; }
     }
 }

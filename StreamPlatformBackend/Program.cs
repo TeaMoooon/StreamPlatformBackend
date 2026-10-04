@@ -187,7 +187,18 @@ builder.Services.AddRateLimiter(options =>
                 QueueLimit = 0
             }));
 
-    // stream-key, regenerate key, reports
+    // stream-key GET (owner dashboard) — auth-only, can be polled lightly
+    options.AddPolicy("sensitive_read", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: ClientIp(httpContext),
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 30,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 0
+            }));
+
+    // regenerate key, revoke sessions, reports
     options.AddPolicy("sensitive", httpContext =>
         RateLimitPartition.GetFixedWindowLimiter(
             partitionKey: ClientIp(httpContext),

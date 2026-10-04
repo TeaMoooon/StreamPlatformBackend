@@ -1,6 +1,5 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.Http;
-using StreamPlatformBackend.Constants;
 using StreamPlatformBackend.Data;
 using StreamPlatformBackend.DTO.StreamDTO;
 using StreamPlatformBackend.Models.Stream;
@@ -64,7 +63,6 @@ namespace StreamPlatformBackend.Services
                     CategoryName = liveStream.Category?.Name,
                     Tags = liveStream.Tags.Select(st => st.Tag.Slug).ToList(),
                     Language = user.StreamLanguage,
-                    Announcement = user.StreamAnnouncement,
                     PreviewUrl = liveStream.PreviewUrl ?? user.LastPreviewUrl,
                     IsLive = true,
                     SubscriberCount = subscriberCount,
@@ -84,7 +82,6 @@ namespace StreamPlatformBackend.Services
                     : null,
                 Tags = user.LastTags ?? new List<string>(),
                 Language = user.StreamLanguage,
-                Announcement = user.StreamAnnouncement,
                 PreviewUrl = user.LastPreviewUrl,
                 IsLive = false,
                 SubscriberCount = subscriberCount,
@@ -115,14 +112,6 @@ namespace StreamPlatformBackend.Services
                 if (language.Length > 10)
                     return (false, "Код языка слишком длинный");
                 user.StreamLanguage = string.IsNullOrEmpty(language) ? "ru" : language;
-            }
-
-            if (dto.Announcement != null)
-            {
-                var announcement = dto.Announcement.Trim();
-                if (announcement.Length > ChatConstants.MaxStreamAnnouncementLength)
-                    return (false, $"Анонс не длиннее {ChatConstants.MaxStreamAnnouncementLength} символов");
-                user.StreamAnnouncement = announcement;
             }
 
             var liveStream = user.CurrentStream is { EndedAt: null } stream ? stream : null;

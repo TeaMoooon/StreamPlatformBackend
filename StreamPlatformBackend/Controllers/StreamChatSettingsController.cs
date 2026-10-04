@@ -46,6 +46,7 @@ namespace StreamPlatformBackend.Controllers
                 {
                     SlowModeSeconds = await _redisChatService.GetSlowModeSecondsAsync(streamerId),
                     ChatRules = await _redisChatService.GetChatRulesAsync(streamerId),
+                    ChatRulesTitle = await _redisChatService.GetChatRulesTitleAsync(streamerId),
                     ChatMode = await _redisChatService.GetChatModeAsync(streamerId)
                 };
 
@@ -91,22 +92,46 @@ namespace StreamPlatformBackend.Controllers
                     }
                 }
 
+                var previousRules = await _redisChatService.GetChatRulesAsync(streamerId);
+                var previousTitle = await _redisChatService.GetChatRulesTitleAsync(streamerId);
+
                 if (dto.ChatRules != null)
                 {
                     var rules = dto.ChatRules.Trim();
                     if (rules.Length > ChatConstants.MaxChatRulesLength)
-                        return BadRequest(new { message = $"Правила не длиннее {ChatConstants.MaxChatRulesLength} символов" });
+                        return BadRequest(new { message = $"Текст уведомления не длиннее {ChatConstants.MaxChatRulesLength} символов" });
 
-                    var previousRules = await _redisChatService.GetChatRulesAsync(streamerId);
                     if (rules != previousRules)
                     {
                         await _redisChatService.SetChatRulesAsync(streamerId, rules);
                         rulesChanged = true;
+                        previousRules = rules;
                         await _moderationLogService.LogAsync(
                             streamerId,
                             userId,
                             ChatModerationActions.RulesUpdate,
                             details: string.IsNullOrEmpty(rules) ? "Очищены" : "Обновлены");
+                    }
+                }
+
+                if (dto.ChatRulesTitle != null)
+                {
+                    var title = dto.ChatRulesTitle.Trim();
+                    if (title.Length > ChatConstants.MaxChatRulesTitleLength)
+                        return BadRequest(new { message = $"Заголовок не длиннее {ChatConstants.MaxChatRulesTitleLength} символов" });
+
+                    if (title != previousTitle)
+                    {
+                        await _redisChatService.SetChatRulesTitleAsync(streamerId, title);
+                        rulesChanged = true;
+                        if (!string.IsNullOrEmpty(await _redisChatService.GetChatRulesAsync(streamerId)))
+                        {
+                            await _moderationLogService.LogAsync(
+                                streamerId,
+                                userId,
+                                ChatModerationActions.RulesUpdate,
+                                details: string.IsNullOrEmpty(title) ? "Заголовок очищен" : "Заголовок обновлён");
+                        }
                     }
                 }
 
@@ -128,18 +153,20 @@ namespace StreamPlatformBackend.Controllers
 
                 var slowModeSeconds = await _redisChatService.GetSlowModeSecondsAsync(streamerId);
                 var chatRules = await _redisChatService.GetChatRulesAsync(streamerId);
+                var chatRulesTitle = await _redisChatService.GetChatRulesTitleAsync(streamerId);
                 var chatMode = await _redisChatService.GetChatModeAsync(streamerId);
 
                 if (slowModeChanged || rulesChanged || modeChanged)
                 {
                     await _hubContext.Clients.Group($"stream_{streamerId}")
-                        .SendAsync("ChatSettingsChanged", new { slowModeSeconds, chatRules, chatMode });
+                        .SendAsync("ChatSettingsChanged", new { slowModeSeconds, chatRules, chatRulesTitle, chatMode });
                 }
 
                 return Ok(new StreamChatSettingsDto
                 {
                     SlowModeSeconds = slowModeSeconds,
                     ChatRules = chatRules,
+                    ChatRulesTitle = chatRulesTitle,
                     ChatMode = chatMode
                 });
             }
