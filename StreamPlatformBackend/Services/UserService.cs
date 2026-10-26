@@ -91,6 +91,7 @@ namespace StreamPlatformBackend.Services
                     Email = userCreateDto.Email.ToLower(),
                     Nickname = userCreateDto.Nickname.ToLower(),
                     PasswordHash = passwordHash,
+                    ProfileImage = "/img/avatars/default.png",
                     StreamServerUrl = "rtmp://your-server.com/live"
                 };
 
@@ -98,6 +99,13 @@ namespace StreamPlatformBackend.Services
                 await _context.SaveChangesAsync();
 
                 user.StreamKey = GenerateStreamKey(user.Id);
+                await _context.UserNicknameHistories.AddAsync(new UserNicknameHistory
+                {
+                    UserId = user.Id,
+                    Nickname = user.Nickname,
+                    SetAt = DateTime.UtcNow,
+                    EndedAt = null
+                });
                 await _context.SaveChangesAsync();
 
                 await transaction.CommitAsync();

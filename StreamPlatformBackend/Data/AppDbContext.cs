@@ -16,6 +16,7 @@ namespace StreamPlatformBackend.Data
         public DbSet<UserModel> Users { get; set; }
         public DbSet<RefreshToken> RefreshTokens { get; set; }
         public DbSet<UserLoginHistory> UserLoginHistories { get; set; }
+        public DbSet<UserNicknameHistory> UserNicknameHistories { get; set; }
         public DbSet<SubscriptionModel> Subscriptions { get; set; }
         public DbSet<StreamModel> Streams { get; set; }
         public DbSet<StreamCategoryModel> StreamCategories { get; set; }
@@ -96,6 +97,19 @@ namespace StreamPlatformBackend.Data
 
             modelBuilder.Entity<UserLoginHistory>()
                 .HasIndex(h => new { h.UserId, h.LoggedInAt });
+
+            modelBuilder.Entity<UserNicknameHistory>()
+                .HasOne(h => h.User)
+                .WithMany()
+                .HasForeignKey(h => h.UserId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<UserNicknameHistory>()
+                .HasIndex(h => new { h.UserId, h.SetAt });
+
+            // Lookup: кто владел ником в момент нарушения.
+            modelBuilder.Entity<UserNicknameHistory>()
+                .HasIndex(h => new { h.Nickname, h.SetAt });
 
             // История стримов: User -> StreamsHistory (1:N)
             modelBuilder.Entity<StreamModel>()

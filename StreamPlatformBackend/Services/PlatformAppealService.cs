@@ -174,10 +174,11 @@ namespace StreamPlatformBackend.Services
                         appeal.Sanction != null &&
                         appeal.Sanction.Status == PlatformSanctionStatuses.Active)
                     {
+                        // No revoke-reason text: note (if any) already goes in the appeal notification.
                         var (_, revokeError) = await _sanctions.RevokeAsync(
                             staffUserId,
                             appeal.SanctionId,
-                            appeal.StaffNote ?? "Апелляция одобрена");
+                            reason: null);
                         if (revokeError != null)
                             return (null, revokeError);
                     }
@@ -213,6 +214,13 @@ namespace StreamPlatformBackend.Services
 
         private async Task NotifyUserAsync(int userId, long appealId, string title, string? note)
         {
+            var trimmed = string.IsNullOrWhiteSpace(note) ? null : note.Trim();
+            // Avoid "Апелляция отклонена: Апелляция отклонена" when note repeats the title.
+            var message = trimmed == null ||
+                          string.Equals(trimmed, title, StringComparison.OrdinalIgnoreCase)
+                ? title
+                : $"{title}. {trimmed}";
+
             var notification = new NotificationModel
             {
                 UserId = userId,
@@ -220,7 +228,7 @@ namespace StreamPlatformBackend.Services
                 PayloadJson = JsonSerializer.Serialize(new
                 {
                     AppealId = appealId,
-                    Message = string.IsNullOrWhiteSpace(note) ? title : $"{title}: {note}",
+                    Message = message,
                     Title = title
                 }),
                 CreatedAt = DateTime.UtcNow

@@ -22,7 +22,7 @@ namespace StreamPlatformBackend.Models.User
         [MaxLength(500)]
         public string ProfileDescription { get; set; } = string.Empty;
 
-        public string ProfileImage { get; set; } = "/images/default-avatar.png";
+        public string ProfileImage { get; set; } = "/img/avatars/default.png";
         public string BackgroundImage { get; set; } = string.Empty;
 
         public int CashBalance { get; set; } = 0;

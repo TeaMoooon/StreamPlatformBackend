@@ -211,13 +211,14 @@ namespace StreamPlatformBackend.Services
             var ticket = await _context.SupportTickets.FirstOrDefaultAsync(t => t.Id == ticketId);
             if (ticket == null) return (null, "Тикет не найден");
 
-            ticket.Messages.Add(new SupportTicketMessage
+            var staffMessage = new SupportTicketMessage
             {
                 AuthorUserId = staffUserId,
                 IsStaff = true,
                 Body = body,
                 CreatedAt = DateTime.UtcNow
-            });
+            };
+            ticket.Messages.Add(staffMessage);
             ticket.AssigneeUserId ??= staffUserId;
             if (ticket.Status is TicketStatuses.Open or TicketStatuses.WaitingUser)
                 ticket.Status = TicketStatuses.InProgress;
@@ -231,11 +232,13 @@ namespace StreamPlatformBackend.Services
                 entityType: "SupportTicket",
                 entityId: ticket.Id.ToString());
 
+            var preview = body.Length > 160 ? body[..157] + "..." : body;
             await NotifyTicketOwnerAsync(
                 ticket.UserId,
                 ticket.Id,
                 ticket.Subject,
-                "Поддержка ответила на ваш тикет");
+                preview,
+                staffMessage.Id);
 
             return (await MapAsync(ticketId), null);
         }
@@ -295,7 +298,12 @@ namespace StreamPlatformBackend.Services
             return (await MapAsync(ticketId), null);
         }
 
-        private async Task NotifyTicketOwnerAsync(int userId, long ticketId, string subject, string message)
+        private async Task NotifyTicketOwnerAsync(
+            int userId,
+            long ticketId,
+            string subject,
+            string message,
+            long? messageId = null)
         {
             var notification = new NotificationModel
             {
@@ -304,6 +312,7 @@ namespace StreamPlatformBackend.Services
                 PayloadJson = JsonSerializer.Serialize(new
                 {
                     TicketId = ticketId,
+                    MessageId = messageId,
                     Subject = subject,
                     Message = message
                 }),

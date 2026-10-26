@@ -204,6 +204,106 @@ namespace StreamPlatformBackend.Tests
         }
 
         [Fact]
+        public async Task IssueAsync_SameIpAndDevice_ShouldRevokePreviousSession()
+        {
+            var (service, db, _) = Create();
+            await using (db)
+            {
+                var user = SeedUser(db);
+                var client = new SessionClientInfo
+                {
+                    IpAddress = "203.0.113.10",
+                    DeviceLabel = "Chrome · Windows",
+                    DeviceCategory = "Desktop"
+                };
+
+                var first = await service.IssueAsync(user, client);
+                var second = await service.IssueAsync(user, client);
+
+                var tokens = db.RefreshTokens.OrderBy(t => t.Id).ToList();
+                Assert.Equal(2, tokens.Count);
+                Assert.NotNull(tokens[0].RevokedAt);
+                Assert.Null(tokens[1].RevokedAt);
+                Assert.Equal(HashToken(second.RefreshToken), tokens[1].TokenHash);
+
+                var active = await service.GetActiveSessionsAsync(user.Id);
+                Assert.Single(active);
+                Assert.Equal(second.SessionId, active[0].Id);
+                Assert.Null(await service.RotateAsync(first.RefreshToken));
+                Assert.NotNull(await service.RotateAsync(second.RefreshToken));
+            }
+        }
+
+        [Fact]
+        public async Task IssueAsync_DifferentIp_ShouldKeepBothSessions()
+        {
+            var (service, db, _) = Create();
+            await using (db)
+            {
+                var user = SeedUser(db);
+                await service.IssueAsync(user, new SessionClientInfo
+                {
+                    IpAddress = "203.0.113.10",
+                    DeviceLabel = "Chrome · Windows",
+                    DeviceCategory = "Desktop"
+                });
+                await service.IssueAsync(user, new SessionClientInfo
+                {
+                    IpAddress = "198.51.100.20",
+                    DeviceLabel = "Chrome · Windows",
+                    DeviceCategory = "Desktop"
+                });
+
+                Assert.Equal(2, (await service.GetActiveSessionsAsync(user.Id)).Count);
+            }
+        }
+
+        [Fact]
+        public async Task IssueAsync_DifferentDeviceLabel_ShouldKeepBothSessions()
+        {
+            var (service, db, _) = Create();
+            await using (db)
+            {
+                var user = SeedUser(db);
+                await service.IssueAsync(user, new SessionClientInfo
+                {
+                    IpAddress = "203.0.113.10",
+                    DeviceLabel = "Chrome · Windows",
+                    DeviceCategory = "Desktop"
+                });
+                await service.IssueAsync(user, new SessionClientInfo
+                {
+                    IpAddress = "203.0.113.10",
+                    DeviceLabel = "Firefox · Windows",
+                    DeviceCategory = "Desktop"
+                });
+
+                Assert.Equal(2, (await service.GetActiveSessionsAsync(user.Id)).Count);
+            }
+        }
+
+        [Fact]
+        public async Task IssueAsync_UnknownFingerprint_ShouldNotCollapseSessions()
+        {
+            var (service, db, _) = Create();
+            await using (db)
+            {
+                var user = SeedUser(db);
+                var weak = new SessionClientInfo
+                {
+                    IpAddress = "unknown",
+                    DeviceLabel = "Неизвестно",
+                    DeviceCategory = "Unknown"
+                };
+
+                await service.IssueAsync(user, weak);
+                await service.IssueAsync(user, weak);
+
+                Assert.Equal(2, (await service.GetActiveSessionsAsync(user.Id)).Count);
+            }
+        }
+
+        [Fact]
         public async Task RotateAsync_ShouldPreserveFamilyAndCreatedAt()
         {
             var (service, db, _) = Create();

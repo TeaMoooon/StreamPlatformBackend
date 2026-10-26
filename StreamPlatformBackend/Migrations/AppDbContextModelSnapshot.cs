@@ -900,6 +900,37 @@ namespace StreamPlatformBackend.Migrations
                     b.ToTable("Users");
                 });
 
+            modelBuilder.Entity("StreamPlatformBackend.Models.User.UserNicknameHistory", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime?>("EndedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Nickname")
+                        .IsRequired()
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<DateTime>("SetAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Nickname", "SetAt");
+
+                    b.HasIndex("UserId", "SetAt");
+
+                    b.ToTable("UserNicknameHistories");
+                });
+
             modelBuilder.Entity("StreamPlatformBackend.Models.User.UserSocialLink", b =>
                 {
                     b.Property<int>("Id")
@@ -1283,6 +1314,17 @@ namespace StreamPlatformBackend.Migrations
                     b.Navigation("CurrentStream");
 
                     b.Navigation("LastCategory");
+                });
+
+            modelBuilder.Entity("StreamPlatformBackend.Models.User.UserNicknameHistory", b =>
+                {
+                    b.HasOne("StreamPlatformBackend.Models.User.UserModel", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("StreamPlatformBackend.Models.User.UserSocialLink", b =>

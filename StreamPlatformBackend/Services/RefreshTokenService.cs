@@ -53,6 +53,12 @@ namespace StreamPlatformBackend.Services
         public async Task<AuthTokenPair> IssueAsync(UserModel user, SessionClientInfo? client = null, CancellationToken ct = default)
         {
             var now = DateTime.UtcNow;
+
+            // Clearing cookies + login again used to leave orphaned active sessions
+            // that look like "another PC" with the same UA/IP. Collapse them on re-login.
+            if (client != null)
+                await RevokeSameDeviceSessionsAsync(user.Id, client, now, ct);
+
             var raw = GenerateRawToken();
             var entity = new RefreshToken
             {
@@ -71,6 +77,60 @@ namespace StreamPlatformBackend.Services
             await _db.SaveChangesAsync(ct);
 
             return BuildPair(user, raw, entity.Id, entity.SessionFamilyId);
+        }
+
+        /// <summary>
+        /// Revokes active sessions with the same IP + device label for this user.
+        /// Skips when fingerprint is too weak (unknown IP / unknown device).
+        /// </summary>
+        private async Task RevokeSameDeviceSessionsAsync(
+            int userId,
+            SessionClientInfo client,
+            DateTime now,
+            CancellationToken ct)
+        {
+            var ip = (client.IpAddress ?? string.Empty).Trim();
+            var label = (client.DeviceLabel ?? string.Empty).Trim();
+
+            if (string.IsNullOrEmpty(ip) ||
+                string.Equals(ip, "unknown", StringComparison.OrdinalIgnoreCase) ||
+                string.IsNullOrEmpty(label) ||
+                string.Equals(label, "Неизвестно", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            var matches = await _db.RefreshTokens
+                .Where(t =>
+                    t.UserId == userId &&
+                    t.RevokedAt == null &&
+                    t.ExpiresAt > now &&
+                    t.IpAddress == ip &&
+                    t.DeviceLabel == label)
+                .ToListAsync(ct);
+
+            if (matches.Count == 0)
+                return;
+
+            var familyIds = matches.Select(t => t.SessionFamilyId).Distinct().ToList();
+            var familyTokens = await _db.RefreshTokens
+                .Where(t =>
+                    t.UserId == userId &&
+                    t.RevokedAt == null &&
+                    familyIds.Contains(t.SessionFamilyId))
+                .ToListAsync(ct);
+
+            foreach (var token in familyTokens)
+                token.RevokedAt = now;
+
+            await _db.SaveChangesAsync(ct);
+
+            _logger.LogInformation(
+                "Revoked {Count} same-device session(s) for user {UserId} ({Ip} / {Device})",
+                familyTokens.Count,
+                userId,
+                ip,
+                label);
         }
 
         public async Task<AuthTokenPair?> RotateAsync(string rawRefreshToken, SessionClientInfo? client = null, CancellationToken ct = default)

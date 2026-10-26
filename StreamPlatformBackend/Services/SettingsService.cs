@@ -199,7 +199,26 @@ namespace StreamPlatformBackend.Services
             if (await NicknameExistsAsync(nickname))
                 throw new ArgumentException("Никнейм уже используется");
 
-            user.Nickname = nickname.ToLower();
+            var normalized = nickname.ToLower();
+            var now = DateTime.UtcNow;
+
+            var activeHistory = await _context.UserNicknameHistories
+                .Where(h => h.UserId == user.Id && h.EndedAt == null)
+                .OrderByDescending(h => h.SetAt)
+                .FirstOrDefaultAsync();
+
+            if (activeHistory != null)
+                activeHistory.EndedAt = now;
+
+            await _context.UserNicknameHistories.AddAsync(new UserNicknameHistory
+            {
+                UserId = user.Id,
+                Nickname = normalized,
+                SetAt = now,
+                EndedAt = null
+            });
+
+            user.Nickname = normalized;
             return true;
         }
 
@@ -329,27 +348,64 @@ namespace StreamPlatformBackend.Services
             if (user == null)
                 throw new ArgumentException("Пользователь не найден");
 
+            if (type is not ("profile" or "background"))
+                throw new ArgumentException("Неверный тип изображения");
+
             var validated = await _imageUploadValidator.ValidateAsync(file);
 
             string baseMediaPath = _mediaPath ?? "/var/www/streamplatform/media";
             var folderPath = Path.Combine(baseMediaPath, "users", user.Id.ToString());
             Directory.CreateDirectory(folderPath);
 
-            string fileName = type switch
-            {
-                "profile" => $"profile{validated.Extension}",
-                "background" => $"background{validated.Extension}",
-                _ => throw new ArgumentException("Неверный тип изображения")
-            };
-
+            // Unique name so nginx/browser cache (expires 30d on /media/) cannot serve a stale image.
+            var fileName = $"{type}_{Guid.NewGuid():N}{validated.Extension}";
             var fullPath = Path.Combine(folderPath, fileName);
             await File.WriteAllBytesAsync(fullPath, validated.Content);
+
+            var previousUrl = type == "profile" ? user.ProfileImage : user.BackgroundImage;
+            TryDeletePreviousUserImage(baseMediaPath, user.Id, previousUrl, type);
 
             // URL для фронтенда (через Nginx /media/)
             string url = $"/media/users/{user.Id}/{fileName}";
 
             if (type == "profile") user.ProfileImage = url;
-            if (type == "background") user.BackgroundImage = url;
+            else user.BackgroundImage = url;
+        }
+
+        /// <summary>
+        /// Removes the previous profile/background file when it belongs to this user folder.
+        /// Ignores static defaults like /img/avatars/default.png.
+        /// </summary>
+        private void TryDeletePreviousUserImage(string baseMediaPath, int userId, string? previousUrl, string type)
+        {
+            if (string.IsNullOrWhiteSpace(previousUrl))
+                return;
+
+            var pathOnly = previousUrl.Split('?', 2)[0];
+            var prefix = $"/media/users/{userId}/";
+            if (!pathOnly.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                return;
+
+            var fileName = Path.GetFileName(pathOnly);
+            if (string.IsNullOrEmpty(fileName))
+                return;
+
+            // Legacy fixed names (profile.jpg) and versioned names (profile_{guid}.jpg).
+            var isLegacy = fileName.StartsWith(type + ".", StringComparison.OrdinalIgnoreCase);
+            var isVersioned = fileName.StartsWith(type + "_", StringComparison.OrdinalIgnoreCase);
+            if (!isLegacy && !isVersioned)
+                return;
+
+            var fullPath = Path.Combine(baseMediaPath, "users", userId.ToString(), fileName);
+            try
+            {
+                if (File.Exists(fullPath))
+                    File.Delete(fullPath);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to delete previous {Type} image for user {UserId}: {Path}", type, userId, fullPath);
+            }
         }
 
 

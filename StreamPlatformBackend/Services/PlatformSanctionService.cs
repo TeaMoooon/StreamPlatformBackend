@@ -180,8 +180,8 @@ namespace StreamPlatformBackend.Services
                 sanction.Id,
                 sanction.Type,
                 string.IsNullOrWhiteSpace(sanction.RevokeReason)
-                    ? $"С вас сняли наказание ({FriendlyType(sanction.Type)})."
-                    : $"С вас сняли наказание ({FriendlyType(sanction.Type)}): {sanction.RevokeReason}");
+                    ? BuildRevokeMessage(sanction.Type, null)
+                    : BuildRevokeMessage(sanction.Type, sanction.RevokeReason));
 
             return (await MapAsync(sanction.Id), null);
         }
@@ -248,7 +248,7 @@ namespace StreamPlatformBackend.Services
                         s.TargetUserId,
                         s.Id,
                         s.Type,
-                        $"Срок наказания ({FriendlyType(s.Type)}) истёк — ограничение снято");
+                        BuildExpireMessage(s.Type));
                 }
                 catch (Exception ex)
                 {
@@ -273,9 +273,51 @@ namespace StreamPlatformBackend.Services
         {
             var until = expiresAt.HasValue
                 ? $" Срок: до {expiresAt.Value:dd.MM.yyyy HH:mm} UTC."
-                : " Срок: бессрочно.";
-            return $"Вам выдали наказание: {FriendlyType(type)}. Причина: {reason}.{until} Обжаловать можно в Настройки → Поддержка.";
+                : type == PlatformSanctionTypes.Warning
+                    ? ""
+                    : " Срок: бессрочно.";
+
+            var headline = type switch
+            {
+                PlatformSanctionTypes.Warning => "Вам выдали предупреждение",
+                PlatformSanctionTypes.ChatMute => "Вам выдали мут чата",
+                PlatformSanctionTypes.StreamBan => "Вам выдали бан стрима",
+                PlatformSanctionTypes.LoginBan => "Вам выдали бан входа",
+                PlatformSanctionTypes.FullBan => "Вам выдали полный бан",
+                _ => $"Вам выдали ограничение: {FriendlyType(type)}"
+            };
+
+            var appealHint = type == PlatformSanctionTypes.Warning
+                ? ""
+                : " Обжаловать можно в Настройки → Поддержка.";
+
+            return $"{headline}. Причина: {reason}.{until}{appealHint}";
         }
+
+        private static string BuildRevokeMessage(string type, string? reason)
+        {
+            var headline = type switch
+            {
+                PlatformSanctionTypes.Warning => "С вас сняли предупреждение",
+                PlatformSanctionTypes.ChatMute => "С вас сняли мут чата",
+                PlatformSanctionTypes.StreamBan => "С вас сняли бан стрима",
+                PlatformSanctionTypes.LoginBan => "С вас сняли бан входа",
+                PlatformSanctionTypes.FullBan => "С вас сняли полный бан",
+                _ => $"С вас сняли ограничение ({FriendlyType(type)})"
+            };
+
+            return string.IsNullOrWhiteSpace(reason) ? $"{headline}." : $"{headline}: {reason}";
+        }
+
+        private static string BuildExpireMessage(string type) => type switch
+        {
+            PlatformSanctionTypes.Warning => "Срок предупреждения истёк",
+            PlatformSanctionTypes.ChatMute => "Срок мута чата истёк — ограничение снято",
+            PlatformSanctionTypes.StreamBan => "Срок бана стрима истёк — ограничение снято",
+            PlatformSanctionTypes.LoginBan => "Срок бана входа истёк — ограничение снято",
+            PlatformSanctionTypes.FullBan => "Срок полного бана истёк — ограничение снято",
+            _ => $"Срок ограничения ({FriendlyType(type)}) истёк — ограничение снято"
+        };
 
         public Task<bool> BlocksLoginAsync(int userId) =>
             HasActiveAsync(userId, PlatformSanctionTypes.LoginBan, PlatformSanctionTypes.FullBan);

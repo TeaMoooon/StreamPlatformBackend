@@ -54,6 +54,17 @@ namespace StreamPlatformBackend.Services
 
                 return isValid;
             }
+            catch (TypeInitializationException ex)
+            {
+                // Crypto/BCrypt type init failure is sticky for process life — never mask as wrong password.
+                _logger.LogCritical(ex, "Password verification unavailable (crypto type initialization failed)");
+                throw new ApplicationException("Password verification temporarily unavailable", ex);
+            }
+            catch (System.IO.FileNotFoundException ex)
+            {
+                _logger.LogCritical(ex, "Password verification unavailable (missing cryptography assembly)");
+                throw new ApplicationException("Password verification temporarily unavailable", ex);
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error verifying password");
