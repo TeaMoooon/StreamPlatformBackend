@@ -16,8 +16,13 @@ namespace StreamPlatformBackend.Services
 
     public class PlatformReportService : IPlatformReportService
     {
-        private static readonly TimeSpan DuplicateWindow = TimeSpan.FromMinutes(15);
         private const int MaxReportsPerHour = 20;
+
+        private static readonly string[] OpenStatuses =
+        {
+            ReportStatuses.New,
+            ReportStatuses.InProgress
+        };
 
         private readonly AppDbContext _context;
         private readonly IPlatformSanctionService _sanctions;
@@ -75,8 +80,13 @@ namespace StreamPlatformBackend.Services
                     return (null, "Не указан пользователь");
             }
 
-            if (targetType == ReportTargetTypes.Channel && streamerId == null)
-                streamerId = targetUserId;
+            if (targetType is ReportTargetTypes.Channel or ReportTargetTypes.Stream)
+            {
+                streamerId ??= targetUserId;
+            }
+
+            if (targetType == ReportTargetTypes.Stream && streamId == null)
+                return (null, "Не указан стрим");
 
             if (targetUserId == reporterUserId)
                 return (null, "Нельзя пожаловаться на себя");
@@ -90,22 +100,40 @@ namespace StreamPlatformBackend.Services
                 return (null, "Канал не найден");
 
             var hourAgo = DateTime.UtcNow.AddHours(-1);
-            var recentCount = await _context.PlatformReports
+            var recentCount = await _context.PlatformReportReporters
                 .CountAsync(r => r.ReporterUserId == reporterUserId && r.CreatedAt >= hourAgo);
             if (recentCount >= MaxReportsPerHour)
                 return (null, "Слишком много жалоб. Попробуйте позже");
 
-            var dupSince = DateTime.UtcNow - DuplicateWindow;
-            var duplicate = await _context.PlatformReports.AnyAsync(r =>
-                r.ReporterUserId == reporterUserId
-                && r.TargetType == targetType
-                && r.TargetUserId == targetUserId
-                && r.MessageId == messageId
-                && r.CreatedAt >= dupSince
-                && r.Status != ReportStatuses.Rejected);
+            var existingCase = await FindOpenCaseAsync(targetType, reason, targetUserId, streamId, messageId);
 
-            if (duplicate)
-                return (null, "Вы уже отправляли похожую жалобу недавно");
+            if (existingCase != null)
+            {
+                var alreadyJoined = await _context.PlatformReportReporters.AnyAsync(r =>
+                    r.ReportId == existingCase.Id && r.ReporterUserId == reporterUserId);
+                if (alreadyJoined)
+                    return (null, "Вы уже отправляли похожую жалобу по этому случаю");
+
+                _context.PlatformReportReporters.Add(new PlatformReportReporter
+                {
+                    ReportId = existingCase.Id,
+                    ReporterUserId = reporterUserId,
+                    Details = details,
+                    CreatedAt = DateTime.UtcNow
+                });
+
+                existingCase.UpdatedAt = DateTime.UtcNow;
+                if (string.IsNullOrEmpty(existingCase.MessageSnapshot) && !string.IsNullOrEmpty(messageSnapshot))
+                    existingCase.MessageSnapshot = messageSnapshot;
+
+                await _context.SaveChangesAsync();
+
+                _logger.LogInformation(
+                    "Report case {ReportId} +1 reporter {ReporterId} (now attached)",
+                    existingCase.Id, reporterUserId);
+
+                return (await MapAsync(existingCase.Id), null);
+            }
 
             var report = new PlatformReport
             {
@@ -126,8 +154,17 @@ namespace StreamPlatformBackend.Services
             _context.PlatformReports.Add(report);
             await _context.SaveChangesAsync();
 
+            _context.PlatformReportReporters.Add(new PlatformReportReporter
+            {
+                ReportId = report.Id,
+                ReporterUserId = reporterUserId,
+                Details = details,
+                CreatedAt = report.CreatedAt
+            });
+            await _context.SaveChangesAsync();
+
             _logger.LogInformation(
-                "Report {ReportId} created by {ReporterId} type={Type} target={TargetUserId}",
+                "Report case {ReportId} opened by {ReporterId} type={Type} target={TargetUserId}",
                 report.Id, reporterUserId, targetType, targetUserId);
 
             return (await MapAsync(report.Id), null);
@@ -141,17 +178,22 @@ namespace StreamPlatformBackend.Services
             if (!string.IsNullOrWhiteSpace(status))
             {
                 var normalized = status.Trim().ToLowerInvariant();
-                if (ReportStatuses.IsKnown(normalized))
+                if (normalized == ReportStatuses.Open)
+                    query = query.Where(r => ReportStatuses.OpenStatuses.Contains(r.Status));
+                else if (ReportStatuses.IsKnown(normalized))
                     query = query.Where(r => r.Status == normalized);
             }
 
             var items = await query
-                .OrderByDescending(r => r.CreatedAt)
+                .OrderByDescending(r => r.UpdatedAt)
+                .ThenByDescending(r => r.CreatedAt)
                 .Take(take)
                 .Include(r => r.Reporter)
                 .Include(r => r.TargetUser)
                 .Include(r => r.Streamer)
                 .Include(r => r.Assignee)
+                .Include(r => r.Reporters)
+                    .ThenInclude(x => x.Reporter)
                 .ToListAsync();
 
             return items.Select(Map).ToList();
@@ -236,6 +278,31 @@ namespace StreamPlatformBackend.Services
             return (await MapAsync(report.Id), null);
         }
 
+        private async Task<PlatformReport?> FindOpenCaseAsync(
+            string targetType,
+            string reason,
+            int? targetUserId,
+            int? streamId,
+            string? messageId)
+        {
+            var query = _context.PlatformReports
+                .Where(r => OpenStatuses.Contains(r.Status)
+                            && r.TargetType == targetType
+                            && r.Reason == reason
+                            && r.TargetUserId == targetUserId);
+
+            if (targetType == ReportTargetTypes.Message)
+                query = query.Where(r => r.MessageId == messageId);
+            else if (targetType == ReportTargetTypes.Stream)
+                query = query.Where(r => r.StreamId == streamId);
+            else
+                query = query.Where(r => r.MessageId == null);
+
+            return await query
+                .OrderByDescending(r => r.UpdatedAt)
+                .FirstOrDefaultAsync();
+        }
+
         private async Task<PlatformReportDto?> MapAsync(long id)
         {
             var report = await _context.PlatformReports.AsNoTracking()
@@ -243,34 +310,65 @@ namespace StreamPlatformBackend.Services
                 .Include(r => r.TargetUser)
                 .Include(r => r.Streamer)
                 .Include(r => r.Assignee)
+                .Include(r => r.Reporters)
+                    .ThenInclude(x => x.Reporter)
                 .FirstOrDefaultAsync(r => r.Id == id);
 
             return report == null ? null : Map(report);
         }
 
-        private static PlatformReportDto Map(PlatformReport r) => new()
+        private static PlatformReportDto Map(PlatformReport r)
         {
-            Id = r.Id,
-            ReporterUserId = r.ReporterUserId,
-            ReporterNickname = r.Reporter?.Nickname,
-            TargetType = r.TargetType,
-            TargetUserId = r.TargetUserId,
-            TargetNickname = r.TargetUser?.Nickname,
-            MessageId = r.MessageId,
-            MessageSnapshot = r.MessageSnapshot,
-            StreamerId = r.StreamerId,
-            StreamerNickname = r.Streamer?.Nickname,
-            StreamId = r.StreamId,
-            Reason = r.Reason,
-            Details = r.Details,
-            Status = r.Status,
-            AssigneeUserId = r.AssigneeUserId,
-            AssigneeNickname = r.Assignee?.Nickname,
-            ResolutionNote = r.ResolutionNote,
-            LinkedSanctionId = r.LinkedSanctionId,
-            CreatedAt = r.CreatedAt,
-            UpdatedAt = r.UpdatedAt,
-            ResolvedAt = r.ResolvedAt
-        };
+            var reporters = (r.Reporters ?? Array.Empty<PlatformReportReporter>())
+                .OrderBy(x => x.CreatedAt)
+                .Select(x => new PlatformReportReporterDto
+                {
+                    Id = x.Id,
+                    ReporterUserId = x.ReporterUserId,
+                    ReporterNickname = x.Reporter?.Nickname,
+                    Details = x.Details,
+                    CreatedAt = x.CreatedAt
+                })
+                .ToList();
+
+            if (reporters.Count == 0)
+            {
+                reporters.Add(new PlatformReportReporterDto
+                {
+                    Id = 0,
+                    ReporterUserId = r.ReporterUserId,
+                    ReporterNickname = r.Reporter?.Nickname,
+                    Details = r.Details,
+                    CreatedAt = r.CreatedAt
+                });
+            }
+
+            return new PlatformReportDto
+            {
+                Id = r.Id,
+                ReporterUserId = r.ReporterUserId,
+                ReporterNickname = r.Reporter?.Nickname,
+                ReporterCount = reporters.Count,
+                Reporters = reporters,
+                TargetType = r.TargetType,
+                TargetUserId = r.TargetUserId,
+                TargetNickname = r.TargetUser?.Nickname,
+                MessageId = r.MessageId,
+                MessageSnapshot = r.MessageSnapshot,
+                StreamerId = r.StreamerId,
+                StreamerNickname = r.Streamer?.Nickname,
+                StreamId = r.StreamId,
+                Reason = r.Reason,
+                Details = r.Details,
+                Status = r.Status,
+                AssigneeUserId = r.AssigneeUserId,
+                AssigneeNickname = r.Assignee?.Nickname,
+                ResolutionNote = r.ResolutionNote,
+                LinkedSanctionId = r.LinkedSanctionId,
+                CreatedAt = r.CreatedAt,
+                UpdatedAt = r.UpdatedAt,
+                ResolvedAt = r.ResolvedAt
+            };
+        }
     }
 }

@@ -64,5 +64,8 @@ namespace StreamPlatformBackend.Models.Staff
         public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
         public DateTime? ResolvedAt { get; set; }
+
+        /// <summary>People who filed this case (one row per reporter).</summary>
+        public virtual ICollection<PlatformReportReporter> Reporters { get; set; } = new HashSet<PlatformReportReporter>();
     }
 }

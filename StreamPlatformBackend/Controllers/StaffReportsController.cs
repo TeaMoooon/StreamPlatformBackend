@@ -19,7 +19,7 @@ namespace StreamPlatformBackend.Controllers
         }
 
         [HttpGet]
-        public async Task<IActionResult> List([FromQuery] string? status = "new", [FromQuery] int take = 50)
+        public async Task<IActionResult> List([FromQuery] string? status = "open", [FromQuery] int take = 50)
         {
             var items = await _reports.ListAsync(status, take);
             return Ok(items);

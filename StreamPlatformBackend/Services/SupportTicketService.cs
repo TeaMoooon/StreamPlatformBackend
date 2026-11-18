@@ -366,6 +366,14 @@ namespace StreamPlatformBackend.Services
                 };
                 _context.PlatformReports.Add(reportEntity);
                 await _context.SaveChangesAsync();
+                _context.PlatformReportReporters.Add(new PlatformReportReporter
+                {
+                    ReportId = reportEntity.Id,
+                    ReporterUserId = actorUserId,
+                    Details = reportEntity.Details,
+                    CreatedAt = reportEntity.CreatedAt
+                });
+                await _context.SaveChangesAsync();
                 ticket.EscalatedReportId = reportEntity.Id;
                 ticket.Category = TicketCategories.Abuse;
                 return (true, null);

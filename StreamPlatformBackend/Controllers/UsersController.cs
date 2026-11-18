@@ -154,7 +154,14 @@ namespace StreamPlatformBackend.Controllers
             {
                 await _refreshTokenService.RevokeAllForUserAsync(pair.UserId);
                 _authCookies.ClearAuthCookies(Response, Request);
-                return StatusCode(StatusCodes.Status403Forbidden, new { message = "Аккаунт заблокирован" });
+                var message = await _platformSanctions.GetBlockMessageAsync(
+                    pair.UserId,
+                    PlatformSanctionTypes.LoginBan,
+                    PlatformSanctionTypes.FullBan);
+                return StatusCode(StatusCodes.Status403Forbidden, new
+                {
+                    message = message ?? "Аккаунт заблокирован"
+                });
             }
 
             _authCookies.AppendAuthCookies(Response, Request, pair);

@@ -4,6 +4,7 @@ namespace StreamPlatformBackend.Constants
     {
         public const string Delete = "Delete";
         public const string Timeout = "Timeout";
+        public const string ClearTimeout = "ClearTimeout";
         public const string Ban = "Ban";
         public const string Unban = "Unban";
         public const string SlowMode = "SlowMode";

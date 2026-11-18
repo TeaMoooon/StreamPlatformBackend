@@ -55,7 +55,7 @@ namespace StreamPlatformBackend.Hubs
             if (userId == streamerId) return true;
             if (await _streamChatBanService.IsBannedAsync(streamerId, userId))
                 return false;
-            if (Context.User?.IsInRole(UserRole.Admin) == true || Context.User?.IsInRole(UserRole.SuperAdmin) == true)
+            if (IsPlatformAdminPrincipal(Context.User))
                 return true;
             return await _redisChatService.IsChatManagerAsync(streamerId, userId);
         }
@@ -65,10 +65,16 @@ namespace StreamPlatformBackend.Hubs
             if (userId == streamerId) return "Streamer";
             if (await _redisChatService.IsModeratorAsync(streamerId, userId)) return "Moderator";
             if (await _redisChatService.IsAssistantAsync(streamerId, userId)) return "Assistant";
-            if (Context.User?.IsInRole(UserRole.Admin) == true || Context.User?.IsInRole(UserRole.SuperAdmin) == true)
+            // Chat badge "Admin" = platform Admin/Owner (not channel team).
+            if (IsPlatformAdminPrincipal(Context.User))
                 return "Admin";
             return "User";
         }
+
+        private static bool IsPlatformAdminPrincipal(System.Security.Claims.ClaimsPrincipal? user) =>
+            user?.IsInRole(UserRole.Admin) == true
+            || user?.IsInRole(UserRole.Owner) == true
+            || user?.IsInRole(UserRole.LegacySuperAdmin) == true;
 
         private bool CanModerateTarget(string actorRole, string targetRole, int actorId, int targetId, int streamerId)
         {
@@ -229,7 +235,7 @@ namespace StreamPlatformBackend.Hubs
                 if (userId == streamerId) role = "Streamer";
                 else if (await _redisChatService.IsModeratorAsync(streamerId, userId)) role = "Moderator";
                 else if (await _redisChatService.IsAssistantAsync(streamerId, userId)) role = "Assistant";
-                else if (Context.User.IsInRole(UserRole.Admin) || Context.User.IsInRole(UserRole.SuperAdmin))
+                else if (IsPlatformAdminPrincipal(Context.User))
                     role = "Admin";
 
                 var bypassSlowMode = role is "Streamer" or "Moderator" or "Assistant" or "Admin";
@@ -507,13 +513,14 @@ namespace StreamPlatformBackend.Hubs
                         seconds
                     });
 
+                // seconds == 0 clears an active mute early (same redis key delete).
                 await _moderationLogService.LogAsync(
                     streamerId,
                     userId,
-                    ChatModerationActions.Timeout,
+                    seconds == 0 ? ChatModerationActions.ClearTimeout : ChatModerationActions.Timeout,
                     targetUserId,
                     targetUser.Nickname,
-                    details: $"{seconds} сек");
+                    details: seconds == 0 ? "снят" : $"{seconds} сек");
             }
             catch (Exception ex)
             {
@@ -638,9 +645,26 @@ namespace StreamPlatformBackend.Hubs
                 }
 
                 var unbanned = await _streamChatBanService.UnbanAsync(streamerId, targetUserId);
+                // Also drop any active timeout so "разбан" fully restores chat for the viewer.
+                await _redisChatService.SetTimeoutAsync(streamerId, targetUserId, 0);
+
                 if (!unbanned)
                 {
-                    await Clients.Caller.SendAsync("Error", "ChatUserNotBanned");
+                    // No permanent ban — still notify timeout clear if that was the only restriction.
+                    await Clients.Group($"stream_{streamerId}")
+                        .SendAsync("ChatUserTimedOut", new
+                        {
+                            userId = targetUserId,
+                            username = targetUser.Nickname,
+                            seconds = 0
+                        });
+                    await _moderationLogService.LogAsync(
+                        streamerId,
+                        userId,
+                        ChatModerationActions.ClearTimeout,
+                        targetUserId,
+                        targetUser.Nickname,
+                        details: "снят");
                     return;
                 }
 
@@ -649,6 +673,13 @@ namespace StreamPlatformBackend.Hubs
                     {
                         userId = targetUserId,
                         username = targetUser.Nickname
+                    });
+                await Clients.Group($"stream_{streamerId}")
+                    .SendAsync("ChatUserTimedOut", new
+                    {
+                        userId = targetUserId,
+                        username = targetUser.Nickname,
+                        seconds = 0
                     });
 
                 await _moderationLogService.LogAsync(

@@ -37,7 +37,7 @@ namespace StreamPlatformBackend.Controllers
         public Task<IActionResult> Me()
         {
             var userId = GetCurrentUserId();
-            var role = User.FindFirstValue(ClaimTypes.Role) ?? UserRole.User;
+            var role = UserRole.Normalize(User.FindFirstValue(ClaimTypes.Role) ?? UserRole.User);
             var nickname = User.Identity?.Name ?? string.Empty;
 
             // Do not write audit on every /me poll — floods the log.
@@ -113,7 +113,7 @@ namespace StreamPlatformBackend.Controllers
         }
 
         /// <summary>
-        /// Assign global role (Admin / SuperAdmin only).
+        /// Assign global role (Admin / Owner only; Owner required for Admin/Owner grants).
         /// </summary>
         [HttpPut("users/{id:int}/role")]
         [Authorize(Policy = "StaffAdmin")]

@@ -187,7 +187,40 @@ namespace StreamPlatformBackend.Migrations
 
                     b.HasIndex("TargetUserId", "CreatedAt");
 
+                    b.HasIndex("Status", "TargetType", "Reason", "TargetUserId", "StreamId", "MessageId");
+
                     b.ToTable("PlatformReports");
+                });
+
+            modelBuilder.Entity("StreamPlatformBackend.Models.Staff.PlatformReportReporter", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Details")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<long>("ReportId")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("ReporterUserId")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ReportId", "ReporterUserId")
+                        .IsUnique();
+
+                    b.HasIndex("ReporterUserId", "CreatedAt");
+
+                    b.ToTable("PlatformReportReporters");
                 });
 
             modelBuilder.Entity("StreamPlatformBackend.Models.Staff.PlatformSanction", b =>
@@ -1035,6 +1068,25 @@ namespace StreamPlatformBackend.Migrations
                     b.Navigation("TargetUser");
                 });
 
+            modelBuilder.Entity("StreamPlatformBackend.Models.Staff.PlatformReportReporter", b =>
+                {
+                    b.HasOne("StreamPlatformBackend.Models.Staff.PlatformReport", "Report")
+                        .WithMany("Reporters")
+                        .HasForeignKey("ReportId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("StreamPlatformBackend.Models.User.UserModel", "Reporter")
+                        .WithMany()
+                        .HasForeignKey("ReporterUserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Report");
+
+                    b.Navigation("Reporter");
+                });
+
             modelBuilder.Entity("StreamPlatformBackend.Models.Staff.PlatformSanction", b =>
                 {
                     b.HasOne("StreamPlatformBackend.Models.User.UserModel", "IssuedByUser")
@@ -1336,6 +1388,11 @@ namespace StreamPlatformBackend.Migrations
                         .IsRequired();
 
                     b.Navigation("User");
+                });
+
+            modelBuilder.Entity("StreamPlatformBackend.Models.Staff.PlatformReport", b =>
+                {
+                    b.Navigation("Reporters");
                 });
 
             modelBuilder.Entity("StreamPlatformBackend.Models.Staff.SupportTicket", b =>

@@ -74,7 +74,7 @@ namespace StreamPlatformBackend.Services
                 Id = u.Id,
                 Nickname = u.Nickname,
                 Email = u.Email,
-                Role = u.Role,
+                Role = UserRole.Normalize(u.Role),
                 CreatedAt = u.CreatedAt,
                 ActiveSanctionCount = u.ActiveSanctionCount
             }).ToList();
@@ -109,7 +109,7 @@ namespace StreamPlatformBackend.Services
                 Id = user.Id,
                 Nickname = user.Nickname,
                 Email = user.Email,
-                Role = user.Role,
+                Role = UserRole.Normalize(user.Role),
                 CreatedAt = user.RegistrationDate,
                 ActiveSanctionCount = sanctions.Count,
                 ActiveSanctions = sanctions
@@ -122,10 +122,11 @@ namespace StreamPlatformBackend.Services
             int targetUserId,
             string newRole)
         {
+            actorRole = UserRole.Normalize(actorRole);
             if (!UserRole.CanManageStaffRoles(actorRole))
                 return (null, "Недостаточно прав для смены роли");
 
-            newRole = (newRole ?? string.Empty).Trim();
+            newRole = UserRole.Normalize(newRole);
             if (!UserRole.IsKnownRole(newRole))
                 return (null, "Неизвестная роль");
 
@@ -136,25 +137,24 @@ namespace StreamPlatformBackend.Services
             if (target == null)
                 return (null, "Пользователь не найден");
 
-            var oldRole = target.Role;
+            var oldRole = UserRole.Normalize(target.Role);
 
             if (oldRole == newRole)
                 return (await GetByIdAsync(targetUserId), null);
 
-            // Only SuperAdmin may grant/revoke SuperAdmin
-            if (actorRole != UserRole.SuperAdmin &&
-                (newRole == UserRole.SuperAdmin || oldRole == UserRole.SuperAdmin))
+            // Owner-only: grant/revoke Owner or Admin.
+            if (actorRole != UserRole.Owner &&
+                (newRole is UserRole.Owner or UserRole.Admin || oldRole is UserRole.Owner or UserRole.Admin))
             {
-                return (null, "Только SuperAdmin может назначать или снимать SuperAdmin");
+                return (null, "Только Owner может назначать или снимать Owner и Admin");
             }
 
-            // Admin cannot change another Admin's role (avoid peer demotion wars); SuperAdmin can
-            if (actorRole == UserRole.Admin &&
-                oldRole == UserRole.Admin &&
-                newRole != UserRole.Admin)
-            {
+            if (!UserRole.CanAssignRole(actorRole, newRole))
+                return (null, "Недостаточно прав для назначения этой роли");
+
+            // Admin cannot demote/change another Admin (Owner already gated above).
+            if (actorRole == UserRole.Admin && oldRole == UserRole.Admin && newRole != UserRole.Admin)
                 return (null, "Admin не может снимать роль другого Admin");
-            }
 
             target.Role = newRole;
             await _context.SaveChangesAsync();

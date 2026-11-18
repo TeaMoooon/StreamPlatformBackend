@@ -21,11 +21,23 @@ namespace StreamPlatformBackend.DTO.StaffDTO
         public IssuePlatformSanctionDto? Sanction { get; set; }
     }
 
-    public class PlatformReportDto
+    public class PlatformReportReporterDto
     {
         public long Id { get; set; }
         public int ReporterUserId { get; set; }
         public string? ReporterNickname { get; set; }
+        public string? Details { get; set; }
+        public DateTime CreatedAt { get; set; }
+    }
+
+    public class PlatformReportDto
+    {
+        public long Id { get; set; }
+        /// <summary>First reporter (case opener). Prefer <see cref="Reporters"/> for the full list.</summary>
+        public int ReporterUserId { get; set; }
+        public string? ReporterNickname { get; set; }
+        public int ReporterCount { get; set; }
+        public List<PlatformReportReporterDto> Reporters { get; set; } = new();
         public string TargetType { get; set; } = string.Empty;
         public int? TargetUserId { get; set; }
         public string? TargetNickname { get; set; }

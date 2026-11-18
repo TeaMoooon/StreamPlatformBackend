@@ -2,6 +2,7 @@ using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using StreamPlatformBackend.Models.Enums;
 using StreamPlatformBackend.Models.User;
 
 namespace StreamPlatformBackend.Services
@@ -37,7 +38,7 @@ namespace StreamPlatformBackend.Services
             if (sessionFamilyId == Guid.Empty)
                 throw new ArgumentException("sessionFamilyId is required", nameof(sessionFamilyId));
 
-            var role = string.IsNullOrWhiteSpace(user.Role) ? "User" : user.Role;
+            var role = UserRole.Normalize(user.Role);
             var claims = new[]
             {
                 new Claim(ClaimTypes.NameIdentifier, user.Id.ToString()),

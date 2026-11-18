@@ -142,6 +142,25 @@ namespace StreamPlatformBackend.Services
                 }
             }
 
+            // Login/full ban must drop existing sessions: JWT validation checks session family
+            // activity, so revoke → next authenticated request fails and the SPA reloads logged out.
+            if (type is PlatformSanctionTypes.LoginBan or PlatformSanctionTypes.FullBan)
+            {
+                try
+                {
+                    using var scope = _scopeFactory.CreateScope();
+                    var refreshTokens = scope.ServiceProvider.GetRequiredService<IRefreshTokenService>();
+                    await refreshTokens.RevokeAllForUserAsync(dto.TargetUserId);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(
+                        ex,
+                        "Failed to revoke sessions after {Type} for user {TargetUserId}",
+                        type, dto.TargetUserId);
+                }
+            }
+
             _logger.LogWarning(
                 "Platform sanction {SanctionId} ({Type}) issued to user {TargetUserId} by {ActorUserId}",
                 sanction.Id, type, dto.TargetUserId, actorUserId);

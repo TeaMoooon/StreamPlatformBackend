@@ -29,6 +29,7 @@ namespace StreamPlatformBackend.Data
         public DbSet<StaffAuditLog> StaffAuditLogs { get; set; }
         public DbSet<PlatformSanction> PlatformSanctions { get; set; }
         public DbSet<PlatformReport> PlatformReports { get; set; }
+        public DbSet<PlatformReportReporter> PlatformReportReporters { get; set; }
         public DbSet<SupportTicket> SupportTickets { get; set; }
         public DbSet<SupportTicketMessage> SupportTicketMessages { get; set; }
         public DbSet<PlatformAppeal> PlatformAppeals { get; set; }
@@ -291,6 +292,28 @@ namespace StreamPlatformBackend.Data
 
             modelBuilder.Entity<PlatformReport>()
                 .HasIndex(r => new { r.TargetUserId, r.CreatedAt });
+
+            modelBuilder.Entity<PlatformReport>()
+                .HasIndex(r => new { r.Status, r.TargetType, r.Reason, r.TargetUserId, r.StreamId, r.MessageId });
+
+            modelBuilder.Entity<PlatformReportReporter>()
+                .HasOne(x => x.Report)
+                .WithMany(r => r.Reporters)
+                .HasForeignKey(x => x.ReportId)
+                .OnDelete(DeleteBehavior.Cascade);
+
+            modelBuilder.Entity<PlatformReportReporter>()
+                .HasOne(x => x.Reporter)
+                .WithMany()
+                .HasForeignKey(x => x.ReporterUserId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            modelBuilder.Entity<PlatformReportReporter>()
+                .HasIndex(x => new { x.ReportId, x.ReporterUserId })
+                .IsUnique();
+
+            modelBuilder.Entity<PlatformReportReporter>()
+                .HasIndex(x => new { x.ReporterUserId, x.CreatedAt });
 
             modelBuilder.Entity<SupportTicket>()
                 .HasOne(t => t.User)
