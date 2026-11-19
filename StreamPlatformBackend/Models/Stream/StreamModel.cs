@@ -43,6 +43,14 @@ namespace StreamPlatformBackend.Models.Stream
         public DateTime? LastPingAt { get; set; }
         public bool WaitingReconnect { get; set; }
 
+        /// <summary>Publisher IP at first successful publish for this stream row (IPv4/IPv6).</summary>
+        [MaxLength(45)]
+        public string? PublisherIp { get; set; }
+
+        /// <summary>Most recent publisher IP (reconnect / late on_publish).</summary>
+        [MaxLength(45)]
+        public string? LastPublisherIp { get; set; }
+
         [Required]
         [MaxLength(36)]
         public string PublicId { get; set; }= null!;

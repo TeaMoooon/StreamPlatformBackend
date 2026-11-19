@@ -15,7 +15,8 @@ namespace StreamPlatformBackend.Services
 {
     public interface IStreamService
     {
-        Task<StreamModel> StartStreamAsync(int userId, string streamKey);
+        /// <param name="publisherIp">Optional client IP from nginx-rtmp <c>addr</c> (audit only; not used for kick defense).</param>
+        Task<StreamModel> StartStreamAsync(int userId, string streamKey, string? publisherIp = null);
         Task<bool> EndStreamAsync(int userId, string streamKey);
         /// <summary>
         /// Immediately ends an active stream (no reconnect window), stops HLS transcoder and notifies viewers offline.
@@ -41,6 +42,10 @@ namespace StreamPlatformBackend.Services
         private readonly IStreamLiveNotifier _streamLiveNotifier;
         private readonly IPlatformSanctionService _platformSanctions;
         private readonly ICatalogCache _catalogCache;
+        private readonly IRtmpPublisherControl _rtmpControl;
+
+        /// <summary>pg_advisory class id for StartStream serialization ('STRM').</summary>
+        private const int StreamStartLockClass = 0x5354524D;
 
         private readonly TimeSpan ReconnectWindow = TimeSpan.FromSeconds(30);
         private readonly string RecordsBase = "/var/www/streamplatform/records/";
@@ -54,7 +59,8 @@ namespace StreamPlatformBackend.Services
                             IServiceScopeFactory scopeFactory,
                             IStreamLiveNotifier streamLiveNotifier,
                             IPlatformSanctionService platformSanctions,
-                            ICatalogCache catalogCache
+                            ICatalogCache catalogCache,
+                            IRtmpPublisherControl? rtmpControl = null
                             )
         {
             _context = context;
@@ -65,6 +71,7 @@ namespace StreamPlatformBackend.Services
             _streamLiveNotifier = streamLiveNotifier;
             _platformSanctions = platformSanctions;
             _catalogCache = catalogCache;
+            _rtmpControl = rtmpControl ?? NullRtmpPublisherControl.Instance;
         }
 
         public async Task<StreamModel?> GetActiveStreamForUserAsync(int userId)
@@ -75,9 +82,35 @@ namespace StreamPlatformBackend.Services
                 .FirstOrDefaultAsync();
         }
 
-        public async Task<StreamModel> StartStreamAsync(int userId, string streamKey)
+        public async Task<StreamModel> StartStreamAsync(int userId, string streamKey, string? publisherIp = null)
+        {
+            // Serialize concurrent on_publish for the same user so two OBS cannot both
+            // create a new live row (first-wins race). InMemory tests skip advisory locks.
+            if (_context.Database.IsRelational())
+            {
+                await using var tx = await _context.Database.BeginTransactionAsync();
+                await _context.Database.ExecuteSqlInterpolatedAsync(
+                    $"SELECT pg_advisory_xact_lock({StreamStartLockClass}, {userId})");
+                try
+                {
+                    var result = await StartStreamCoreAsync(userId, streamKey, publisherIp);
+                    await tx.CommitAsync();
+                    return result;
+                }
+                catch
+                {
+                    await tx.RollbackAsync();
+                    throw;
+                }
+            }
+
+            return await StartStreamCoreAsync(userId, streamKey, publisherIp);
+        }
+
+        private async Task<StreamModel> StartStreamCoreAsync(int userId, string streamKey, string? publisherIp)
         {
             var now = DateTime.UtcNow;
+            var ip = NormalizeIp(publisherIp);
 
             var user = await _context.Users
                 .Include(u => u.CurrentStream)
@@ -99,12 +132,27 @@ namespace StreamPlatformBackend.Services
             }
 
 
-            // --- 1. Если есть активный стрим — обновляем пинг ---
+            // --- 1. Активный стрим ---
             var active = await GetActiveStreamForUserAsync(userId);
             if (active != null)
             {
+                // First-wins: second OBS with the same key cannot kick a healthy live publish.
+                // Reconnect is allowed only after on_publish_done put us in WaitingReconnect.
+                if (!active.WaitingReconnect)
+                {
+                    throw new UnauthorizedAccessException(
+                        "Stream is already live. Stop the other encoder or wait for reconnect window.");
+                }
+
+                EnsureReconnectPublisherAllowed(active, ip);
+
                 active.LastPingAt = now;
                 active.WaitingReconnect = false;
+                if (ip != null)
+                {
+                    active.LastPublisherIp = ip;
+                    active.PublisherIp ??= ip;
+                }
                 EnsurePlaybackId(active);
                 user.CurrentStream = active;
                 user.IsOnline = true;
@@ -116,7 +164,7 @@ namespace StreamPlatformBackend.Services
             }
 
 
-            // --- 2. Возврат в окно реконнекта ---
+            // --- 2. Возврат в окно реконнекта (EndedAt уже проставлен) ---
             var last = await _context.Streams
                 .Where(s => s.UserId == userId)
                 .OrderByDescending(s => s.StartedAt)
@@ -124,9 +172,16 @@ namespace StreamPlatformBackend.Services
 
             if (last != null && last.EndedAt != null && (now - last.EndedAt.Value) <= ReconnectWindow)
             {
+                EnsureReconnectPublisherAllowed(last, ip);
+
                 last.EndedAt = null;
                 last.LastPingAt = now;
                 last.WaitingReconnect = false;
+                if (ip != null)
+                {
+                    last.LastPublisherIp = ip;
+                    last.PublisherIp ??= ip;
+                }
                 EnsurePlaybackId(last);
 
                 user.CurrentStream = last;
@@ -152,6 +207,8 @@ namespace StreamPlatformBackend.Services
                 TotalViews = 0,
                 RecordEnabled = user.RecordEnabled,  // здесь важно
                 LastPingAt = now,
+                PublisherIp = ip,
+                LastPublisherIp = ip,
                 PublicId = Guid.NewGuid().ToString()
             };
 
@@ -273,6 +330,7 @@ namespace StreamPlatformBackend.Services
                 {
                     TryKillHlsTranscoder(streamKey);
                     TryCleanHlsOutput(streamKey);
+                    await _rtmpControl.TryDropPublisherAsync(streamKey);
                 }
 
                 if (changed)
@@ -299,6 +357,8 @@ namespace StreamPlatformBackend.Services
             {
                 TryKillHlsTranscoder(streamKey);
                 TryCleanHlsOutput(streamKey, stream.PublicId);
+                // Drop the live RTMP publisher so rotate/ban does not leave a zombie OBS session.
+                await _rtmpControl.TryDropPublisherAsync(streamKey);
             }
 
             await InvalidateCatalogAsync(userId, user.Nickname);
@@ -655,6 +715,34 @@ namespace StreamPlatformBackend.Services
             if (user == null) return false;
             if (await _platformSanctions.BlocksStreamingAsync(userId)) return false;
             return true;
+        }
+
+        private static string? NormalizeIp(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                return null;
+            var trimmed = raw.Trim();
+            if (trimmed.Length > 45)
+                trimmed = trimmed[..45];
+            return trimmed;
+        }
+
+        /// <summary>
+        /// Soft reconnect anchor: when both the original publisher IP and the reconnect IP
+        /// are known, reject a different address during WaitingReconnect / reconnect window.
+        /// Missing IP (callback without <c>addr</c>) does not block reconnect.
+        /// </summary>
+        private static void EnsureReconnectPublisherAllowed(StreamModel stream, string? reconnectIp)
+        {
+            if (string.IsNullOrWhiteSpace(stream.PublisherIp) || string.IsNullOrWhiteSpace(reconnectIp))
+                return;
+
+            if (!string.Equals(stream.PublisherIp, reconnectIp, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new UnauthorizedAccessException(
+                    "Reconnect from a different IP is not allowed during the reconnect window. " +
+                    "Wait for the window to end, or rotate the stream key.");
+            }
         }
 
         public async Task<bool> IsUserStreamingAsync(int userId)

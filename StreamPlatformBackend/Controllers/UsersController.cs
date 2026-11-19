@@ -128,15 +128,13 @@ namespace StreamPlatformBackend.Controllers
 
         /// <summary>
         /// Обмен refresh-токена на новую пару access + refresh (rotation).
-        /// Refresh берётся из HttpOnly cookie; body опционален (legacy).
+        /// Refresh только из HttpOnly cookie (не из JSON body — XSS-устойчивее).
         /// </summary>
         [HttpPost("refresh")]
         [EnableRateLimiting("auth")]
-        public async Task<IActionResult> Refresh([FromBody] RefreshTokenRequestDto? dto)
+        public async Task<IActionResult> Refresh()
         {
             var refreshToken = _authCookies.ReadRefreshToken(Request);
-            if (string.IsNullOrWhiteSpace(refreshToken))
-                refreshToken = dto?.RefreshToken;
 
             if (string.IsNullOrWhiteSpace(refreshToken))
                 return BadRequest(new { message = "Refresh token is required" });
@@ -175,14 +173,13 @@ namespace StreamPlatformBackend.Controllers
 
         /// <summary>
         /// Отзыв refresh-токена (logout) и очистка auth cookies.
+        /// Refresh только из HttpOnly cookie.
         /// </summary>
         [HttpPost("logout")]
         [EnableRateLimiting("auth")]
-        public async Task<IActionResult> Logout([FromBody] RefreshTokenRequestDto? dto)
+        public async Task<IActionResult> Logout()
         {
             var refreshToken = _authCookies.ReadRefreshToken(Request);
-            if (string.IsNullOrWhiteSpace(refreshToken))
-                refreshToken = dto?.RefreshToken;
 
             if (!string.IsNullOrWhiteSpace(refreshToken))
                 await _refreshTokenService.RevokeAsync(refreshToken);

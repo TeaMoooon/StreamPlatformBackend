@@ -27,12 +27,6 @@ namespace StreamPlatformBackend.Services
             return null;
         }
 
-        public static bool IsLoopback(HttpRequest request)
-        {
-            var ip = request.HttpContext.Connection.RemoteIpAddress;
-            return ip != null && System.Net.IPAddress.IsLoopback(ip);
-        }
-
         public static bool SecretsMatch(string configuredSecret, string? providedSecret)
         {
             if (string.IsNullOrEmpty(providedSecret))

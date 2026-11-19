@@ -100,15 +100,28 @@ namespace StreamPlatformBackend.Controllers
             if (string.IsNullOrWhiteSpace(q) || q.Trim().Length < 2)
                 return BadRequest(new { message = "Введите минимум 2 символа для поиска" });
 
+            var viewerRole = UserRole.Normalize(User.FindFirstValue(ClaimTypes.Role) ?? UserRole.User);
             var users = await _staffUsers.SearchAsync(q, take);
+            if (!UserRole.CanModeratePlatform(viewerRole))
+            {
+                foreach (var u in users)
+                    u.Email = MaskEmail(u.Email);
+            }
+
             return Ok(users);
         }
 
         [HttpGet("users/{id:int}")]
         public async Task<IActionResult> GetUser(int id)
         {
+            var viewerRole = UserRole.Normalize(User.FindFirstValue(ClaimTypes.Role) ?? UserRole.User);
             var user = await _staffUsers.GetByIdAsync(id);
             if (user == null) return NotFound(new { message = "Пользователь не найден" });
+
+            // Support sees masked email; Safety+ gets full address for investigations.
+            if (!UserRole.CanModeratePlatform(viewerRole))
+                user.Email = MaskEmail(user.Email);
+
             return Ok(user);
         }
 
@@ -134,6 +147,22 @@ namespace StreamPlatformBackend.Controllers
             if (string.IsNullOrEmpty(userIdClaim) || !int.TryParse(userIdClaim, out var id))
                 throw new UnauthorizedAccessException("Неверный токен авторизации");
             return id;
+        }
+
+        /// <summary>a***@domain.com — enough for Support matching, not full PII dump.</summary>
+        private static string? MaskEmail(string? email)
+        {
+            if (string.IsNullOrWhiteSpace(email))
+                return email;
+
+            var at = email.IndexOf('@');
+            if (at <= 0 || at == email.Length - 1)
+                return "***";
+
+            var local = email[..at];
+            var domain = email[(at + 1)..];
+            var visible = local.Length == 1 ? "*" : local[0] + "***";
+            return $"{visible}@{domain}";
         }
     }
 }

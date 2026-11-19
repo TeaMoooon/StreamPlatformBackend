@@ -19,6 +19,8 @@ namespace StreamPlatformBackend.DTO.StaffDTO
         public bool EscalateToReport { get; set; }
         public string? EscalateReason { get; set; }
         public string? EscalateDetails { get; set; }
+        /// <summary>Required when escalating: accused user, NOT the ticket author.</summary>
+        public int? EscalateTargetUserId { get; set; }
     }
 
     public class SupportTicketMessageDto

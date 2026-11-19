@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using StreamPlatformBackend.Data;
 using StreamPlatformBackend.DTO;
 using StreamPlatformBackend.DTO.StreamDTO;
@@ -38,13 +39,15 @@ namespace StreamPlatformBackend.Services
         private readonly ILogger<SettingsService> _logger;
         private readonly ICatalogCache _catalogCache;
         private readonly IImageUploadValidator _imageUploadValidator;
+        private readonly IServiceScopeFactory _scopeFactory;
         private readonly string _mediaPath;
         public SettingsService(AppDbContext context, IConfiguration configuration, 
                                IPasswordHasherService passwordHasher, INotificationRepository notificationRepository, 
                                INotificationSender notificationSender, ILogger<SettingsService> logger,
                                ICatalogCache catalogCache,
                                IImageUploadValidator imageUploadValidator,
-                               IRefreshTokenService refreshTokens)
+                               IRefreshTokenService refreshTokens,
+                               IServiceScopeFactory scopeFactory)
         {
             _context = context;
             _passwordHasher = passwordHasher;
@@ -53,6 +56,7 @@ namespace StreamPlatformBackend.Services
             _mediaPath = configuration["Media:Path"];
             _catalogCache = catalogCache;
             _imageUploadValidator = imageUploadValidator;
+            _scopeFactory = scopeFactory;
         }
 
         // ==================================================
@@ -129,34 +133,37 @@ namespace StreamPlatformBackend.Services
 
         public async Task<string> RegenerateStreamKeyAsync(int userId)
         {
-            using var transaction = await _context.Database.BeginTransactionAsync();
+            // Terminate under the OLD key first (separate DbContext) so we do not overwrite
+            // ForceTerminate's IsOnline/CurrentStream cleared flags with a stale tracked entity.
+            // Fail-closed: never rotate if terminate throws — otherwise OBS can keep publishing
+            // under the old key name while the DB already accepts a new key.
             try
             {
-                var user = await _context.Users.FindAsync(userId) ?? throw new ArgumentException("Пользователь не найден");
-                string newStreamKey;
-                //int attempts = 0;
-                //const int maxAttempts = 5;
-                newStreamKey = GenerateStreamKey(userId);
+                using var scope = _scopeFactory.CreateScope();
+                var streams = scope.ServiceProvider.GetRequiredService<IStreamService>();
+                await streams.ForceTerminateActiveStreamAsync(userId, reason: "stream_key_rotated");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to terminate active stream before key rotate for {UserId}", userId);
+                throw new InvalidOperationException(
+                    "Не удалось завершить активный эфир перед сменой ключа. Повторите попытку.",
+                    ex);
+            }
 
-                /*Закоментировано до выяснения необходимости из-за вида ключа (live_id_key)
-                
-                do
-                {
-                    newStreamKey = GenerateStreamKey(userId);
-                    attempts++;
-                    if (attempts > maxAttempts) throw new ApplicationException("Не удалось сгенерировать уникальный ключ трансляции");
-                }
-                while (await StreamKeyExistsAsync(newStreamKey));*/
+            try
+            {
+                var user = await _context.Users.FirstOrDefaultAsync(u => u.Id == userId)
+                    ?? throw new ArgumentException("Пользователь не найден");
 
+                var newStreamKey = GenerateStreamKey(userId);
                 user.StreamKey = newStreamKey;
                 await _context.SaveChangesAsync();
-                await transaction.CommitAsync();
 
                 return newStreamKey;
             }
             catch (Exception ex)
             {
-                await transaction.RollbackAsync();
                 _logger.LogError(ex, "Ошибка при пересоздании StreamKey для пользователя {UserId}", userId);
                 throw;
             }

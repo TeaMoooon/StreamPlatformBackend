@@ -265,41 +265,19 @@ namespace StreamPlatformBackend.Tests
 
             Assert.Equal(StatusCodes.Status401Unauthorized, StatusCodeOf(result));
             streamService.Verify(
-                s => s.StartStreamAsync(It.IsAny<int>(), It.IsAny<string>()),
+                s => s.StartStreamAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string?>()),
                 Times.Never);
         }
 
         [Fact]
-        public async Task OnStreamStart_ShouldAcceptLoopbackQuerySecretAsMigrationFallback()
+        public async Task OnStreamStart_ShouldRejectLoopbackQuerySecret_FallbackRemoved()
         {
-            const int userId = 1;
-            const string streamKey = "live_1_abc";
-
             var streamService = new Mock<IStreamService>(MockBehavior.Strict);
-            streamService
-                .Setup(s => s.StartStreamAsync(userId, streamKey))
-                .ReturnsAsync(new StreamModel
-                {
-                    Id = 1,
-                    UserId = userId,
-                    StreamName = "test",
-                    PublicId = "playback_1"
-                });
 
             var dbOptions = new DbContextOptionsBuilder<AppDbContext>()
                 .UseInMemoryDatabase($"db_{Guid.NewGuid():N}")
                 .Options;
             var db = new AppDbContext(dbOptions);
-            db.Users.Add(new UserModel
-            {
-                Id = userId,
-                Email = "a@example.com",
-                Nickname = "streamer",
-                Role = "User",
-                PasswordHash = "x",
-                StreamKey = streamKey
-            });
-            await db.SaveChangesAsync();
 
             var configuration = new ConfigurationBuilder()
                 .AddInMemoryCollection(new Dictionary<string, string>
@@ -319,7 +297,7 @@ namespace StreamPlatformBackend.Tests
             httpContext.Request.QueryString = new QueryString("?secret=expectedSecret");
             httpContext.Request.ContentType = "application/json";
             httpContext.Request.Body = new MemoryStream(
-                Encoding.UTF8.GetBytes($"{{\"stream\":\"{streamKey}\"}}"));
+                Encoding.UTF8.GetBytes("{\"stream\":\"live_1_abc\"}"));
 
             controller.ControllerContext = new ControllerContext
             {
@@ -328,8 +306,10 @@ namespace StreamPlatformBackend.Tests
 
             var result = await controller.OnStreamStart();
 
-            Assert.Equal(StatusCodes.Status200OK, StatusCodeOf(result));
-            streamService.Verify(s => s.StartStreamAsync(userId, streamKey), Times.Once);
+            Assert.Equal(StatusCodes.Status401Unauthorized, StatusCodeOf(result));
+            streamService.Verify(
+                s => s.StartStreamAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string?>()),
+                Times.Never);
         }
 
         [Fact]
@@ -371,7 +351,7 @@ namespace StreamPlatformBackend.Tests
 
             Assert.Equal(StatusCodes.Status401Unauthorized, StatusCodeOf(result));
             streamService.Verify(
-                s => s.StartStreamAsync(It.IsAny<int>(), It.IsAny<string>()),
+                s => s.StartStreamAsync(It.IsAny<int>(), It.IsAny<string>(), It.IsAny<string?>()),
                 Times.Never);
         }
 
@@ -515,7 +495,7 @@ namespace StreamPlatformBackend.Tests
 
             var streamService = new Mock<IStreamService>(MockBehavior.Strict);
             streamService
-                .Setup(s => s.StartStreamAsync(userId, spoofedStreamKey))
+                .Setup(s => s.StartStreamAsync(userId, spoofedStreamKey, It.IsAny<string?>()))
                 .ReturnsAsync(new StreamModel
                 {
                     Id = 1,
@@ -570,7 +550,9 @@ namespace StreamPlatformBackend.Tests
 
             // Assert (adversarial expectation: streamKey must be bound to user)
             Assert.Equal(StatusCodes.Status401Unauthorized, StatusCodeOf(result));
-            streamService.Verify(s => s.StartStreamAsync(userId, spoofedStreamKey), Times.Never);
+            streamService.Verify(
+                s => s.StartStreamAsync(userId, spoofedStreamKey, It.IsAny<string?>()),
+                Times.Never);
         }
 
         [Fact]
@@ -638,7 +620,7 @@ namespace StreamPlatformBackend.Tests
             const string streamKey = "live_1_abc";
 
             streamService
-                .Setup(s => s.StartStreamAsync(userId, streamKey))
+                .Setup(s => s.StartStreamAsync(userId, streamKey, It.IsAny<string?>()))
                 .ReturnsAsync(new StreamModel
                 {
                     Id = 1,

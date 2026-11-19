@@ -181,6 +181,15 @@ namespace StreamPlatformBackend.Hubs
 
         public async Task UpdateStreamStatus(int streamerId)
         {
+            // Viewers already in the stream page call this as a soft poll after JoinStream.
+            // Require an active join for this streamer so unauthenticated hub callers cannot
+            // fan-out status broadcasts to arbitrary groups.
+            if (!ConnectionMap.TryGetValue(Context.ConnectionId, out var joined) ||
+                joined.StreamerId != streamerId)
+            {
+                return;
+            }
+
             var streamInfo = await _streamService.GetStreamInfoAsync(streamerId);
 
             await Clients.Group($"stream_{streamerId}")

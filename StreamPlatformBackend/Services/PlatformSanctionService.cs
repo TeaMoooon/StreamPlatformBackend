@@ -82,11 +82,15 @@ namespace StreamPlatformBackend.Services
             if (dto.TargetUserId == actorUserId)
                 return (null, "Нельзя применить санкцию к себе");
 
-            if (UserRole.IsStaff(target.Role) && !UserRole.CanManageStaffRoles(
-                    (await _context.Users.Where(u => u.Id == actorUserId).Select(u => u.Role).FirstOrDefaultAsync())))
-            {
-                return (null, "Недостаточно прав для санкции в отношении staff");
-            }
+            var actorRole = UserRole.Normalize(
+                await _context.Users.AsNoTracking()
+                    .Where(u => u.Id == actorUserId)
+                    .Select(u => u.Role)
+                    .FirstOrDefaultAsync());
+
+            // Strict outrank: peers and higher ranks cannot be sanctioned (Admin ↛ Owner/Admin).
+            if (UserRole.Rank(actorRole) <= UserRole.Rank(target.Role))
+                return (null, "Нельзя применить санкцию к пользователю с равным или более высоким рангом");
 
             await ExpireOverdueAsync();
 
@@ -178,6 +182,30 @@ namespace StreamPlatformBackend.Services
 
             if (sanction.Status != PlatformSanctionStatuses.Active)
                 return (null, "Санкция уже не активна");
+
+            var actorRole = UserRole.Normalize(
+                await _context.Users.AsNoTracking()
+                    .Where(u => u.Id == actorUserId)
+                    .Select(u => u.Role)
+                    .FirstOrDefaultAsync());
+
+            var targetRole = UserRole.Normalize(
+                await _context.Users.AsNoTracking()
+                    .Where(u => u.Id == sanction.TargetUserId)
+                    .Select(u => u.Role)
+                    .FirstOrDefaultAsync());
+
+            if (UserRole.Rank(actorRole) <= UserRole.Rank(targetRole))
+                return (null, "Нельзя снять санкцию с пользователя с равным или более высоким рангом");
+
+            var issuerRole = UserRole.Normalize(
+                await _context.Users.AsNoTracking()
+                    .Where(u => u.Id == sanction.IssuedByUserId)
+                    .Select(u => u.Role)
+                    .FirstOrDefaultAsync());
+
+            if (UserRole.Rank(actorRole) < UserRole.Rank(issuerRole))
+                return (null, "Нельзя снять санкцию, выданную сотрудником с более высоким рангом");
 
             sanction.Status = PlatformSanctionStatuses.Revoked;
             sanction.RevokedAt = DateTime.UtcNow;

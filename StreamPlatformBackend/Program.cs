@@ -11,6 +11,8 @@ using StreamPlatformBackend.Hubs;
 using StreamPlatformBackend.Models.Enums;
 using StreamPlatformBackend.Services;
 using StreamPlatformBackend.Services.NotificationService;
+using System.Net;
+using System.Security.Claims;
 using System.Text;
 using System.Threading.RateLimiting;
 
@@ -97,6 +99,10 @@ builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IStreamService, StreamService>();
 builder.Services.AddScoped<IStreamLiveNotifier, StreamLiveNotifier>();
 builder.Services.AddScoped<IChatNicknameNotifier, ChatNicknameNotifier>();
+builder.Services.AddHttpClient<IRtmpPublisherControl, RtmpPublisherControl>(client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(3);
+});
 
 
 
@@ -132,25 +138,19 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(sp =>
     return ConnectionMultiplexer.Connect(redis);
 });
 
-// Behind nginx: prefer X-Real-IP / X-Forwarded-For for per-client rate limits.
-static string ClientIp(HttpContext httpContext)
-{
-    var forwarded = httpContext.Request.Headers["X-Forwarded-For"].FirstOrDefault();
-    if (!string.IsNullOrWhiteSpace(forwarded))
-        return forwarded.Split(',')[0].Trim();
-
-    var realIp = httpContext.Request.Headers["X-Real-IP"].FirstOrDefault();
-    if (!string.IsNullOrWhiteSpace(realIp))
-        return realIp.Trim();
-
-    return httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-}
+// After UseForwardedHeaders, RemoteIpAddress is the client IP only when the immediate
+// peer is a known proxy (nginx on loopback). Do not trust X-Forwarded-For from the public.
+static string ClientIp(HttpContext httpContext) =>
+    httpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
-    options.KnownNetworks.Clear();
+    // Trust only local nginx — clearing KnownProxies would let any client spoof XFF.
     options.KnownProxies.Clear();
+    options.KnownNetworks.Clear();
+    options.KnownProxies.Add(IPAddress.Loopback);
+    options.KnownProxies.Add(IPAddress.IPv6Loopback);
 });
 
 builder.Services.AddRateLimiter(options =>
@@ -231,7 +231,8 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ClockSkew = TimeSpan.Zero
         };
 
-        // Resolve JWT from (1) Authorization header (default), (2) HttpOnly cookie, (3) SignalR query.
+        // Resolve JWT from (1) Authorization header (default), (2) HttpOnly cookie.
+        // No access_token query for SignalR — FE uses withCredentials cookies; query JWTs leak to logs.
         // After signature validation, require the session family (sid) to still be active —
         // otherwise remote logout would leave access JWT usable until expiry.
         options.Events = new JwtBearerEvents
@@ -245,14 +246,6 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     && !string.IsNullOrWhiteSpace(cookieToken))
                 {
                     context.Token = cookieToken;
-                    return Task.CompletedTask;
-                }
-
-                var accessToken = context.Request.Query["access_token"].FirstOrDefault();
-                var path = context.HttpContext.Request.Path;
-                if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/hubs"))
-                {
-                    context.Token = accessToken;
                 }
 
                 return Task.CompletedTask;
@@ -271,6 +264,30 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 if (!await refreshTokens.IsSessionFamilyActiveAsync(familyId))
                 {
                     context.Fail("Session has been revoked");
+                    return;
+                }
+
+                // Staff policies read role claims — refresh from DB so a demote takes effect
+                // even if an access JWT was issued before the role change (sid still active).
+                var userIdRaw = context.Principal?.FindFirst(ClaimTypes.NameIdentifier)?.Value;
+                if (int.TryParse(userIdRaw, out var userId) &&
+                    context.Principal?.Identity is ClaimsIdentity identity)
+                {
+                    var db = context.HttpContext.RequestServices.GetRequiredService<AppDbContext>();
+                    var dbRole = await db.Users.AsNoTracking()
+                        .Where(u => u.Id == userId)
+                        .Select(u => u.Role)
+                        .FirstOrDefaultAsync();
+                    if (dbRole != null)
+                    {
+                        var normalized = UserRole.Normalize(dbRole);
+                        foreach (var claim in identity.FindAll(ClaimTypes.Role).ToList())
+                            identity.RemoveClaim(claim);
+                        foreach (var claim in identity.FindAll("Role").ToList())
+                            identity.RemoveClaim(claim);
+                        identity.AddClaim(new Claim(ClaimTypes.Role, normalized));
+                        identity.AddClaim(new Claim("Role", normalized));
+                    }
                 }
             }
         };

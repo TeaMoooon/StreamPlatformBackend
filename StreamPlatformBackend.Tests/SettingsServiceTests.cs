@@ -1,6 +1,7 @@
 ﻿using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using StreamPlatformBackend.Data;
@@ -26,12 +27,13 @@ namespace StreamPlatformBackend.Tests
             0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52
         };
 
-        private static SettingsService CreateService(
+        private static (SettingsService service, Mock<IStreamService> streams) CreateService(
             AppDbContext db,
             string mediaPath,
             long? maxBytes = null,
             IPasswordHasherService? passwordHasher = null,
-            IRefreshTokenService? refreshTokens = null)
+            IRefreshTokenService? refreshTokens = null,
+            Exception? terminateException = null)
         {
             var values = new Dictionary<string, string?>
             {
@@ -49,7 +51,24 @@ namespace StreamPlatformBackend.Tests
                 .Setup(c => c.InvalidateChannelAsync(It.IsAny<int>(), It.IsAny<string?[]>()))
                 .Returns(Task.CompletedTask);
 
-            return new SettingsService(
+            var services = new ServiceCollection();
+            var streams = new Mock<IStreamService>(MockBehavior.Loose);
+            if (terminateException != null)
+            {
+                streams
+                    .Setup(s => s.ForceTerminateActiveStreamAsync(It.IsAny<int>(), It.IsAny<string?>()))
+                    .ThrowsAsync(terminateException);
+            }
+            else
+            {
+                streams
+                    .Setup(s => s.ForceTerminateActiveStreamAsync(It.IsAny<int>(), It.IsAny<string?>()))
+                    .ReturnsAsync(false);
+            }
+            services.AddSingleton(streams.Object);
+            var provider = services.BuildServiceProvider();
+
+            var service = new SettingsService(
                 db,
                 config,
                 passwordHasher ?? Mock.Of<IPasswordHasherService>(),
@@ -58,7 +77,9 @@ namespace StreamPlatformBackend.Tests
                 NullLogger<SettingsService>.Instance,
                 catalogCache.Object,
                 new ImageUploadValidator(config),
-                refreshTokens ?? Mock.Of<IRefreshTokenService>());
+                refreshTokens ?? Mock.Of<IRefreshTokenService>(),
+                provider.GetRequiredService<IServiceScopeFactory>());
+            return (service, streams);
         }
 
         private static DbContextOptions<AppDbContext> CreateDbOptions()
@@ -120,7 +141,7 @@ namespace StreamPlatformBackend.Tests
                 });
                 await db.SaveChangesAsync();
 
-                var service = CreateService(db, mediaPath);
+                var (service, _) = CreateService(db, mediaPath);
                 var dto = new UserUpdateDataDto
                 {
                     ProfileImage = CreateFormFile(fileName, JpegBytes)
@@ -158,7 +179,7 @@ namespace StreamPlatformBackend.Tests
                 });
                 await db.SaveChangesAsync();
 
-                var service = CreateService(db, mediaPath);
+                var (service, _) = CreateService(db, mediaPath);
                 var dto = new UserUpdateDataDto
                 {
                     // Claims PNG but content is JPEG
@@ -208,7 +229,7 @@ namespace StreamPlatformBackend.Tests
                 });
                 await db.SaveChangesAsync();
 
-                var service = CreateService(db, mediaPath);
+                var (service, _) = CreateService(db, mediaPath);
                 var dto = new UserUpdateDataDto
                 {
                     ProfileImage = CreateFormFile(fileName, content)
@@ -217,8 +238,12 @@ namespace StreamPlatformBackend.Tests
                 await service.UpdateUserProfileAsync(7, dto);
 
                 var user = await db.Users.SingleAsync(u => u.Id == 7);
-                Assert.Equal($"/media/users/7/profile{expectedExt}", user.ProfileImage);
-                Assert.True(File.Exists(Path.Combine(mediaPath, "users", "7", $"profile{expectedExt}")));
+                // Cache-busted names: profile_{guid}.ext (not fixed profile.ext).
+                Assert.Matches(
+                    $@"^/media/users/7/profile_[0-9a-f]{{32}}\{expectedExt}$",
+                    user.ProfileImage);
+                var storedName = Path.GetFileName(user.ProfileImage);
+                Assert.True(File.Exists(Path.Combine(mediaPath, "users", "7", storedName!)));
             }
             finally
             {
@@ -248,7 +273,7 @@ namespace StreamPlatformBackend.Tests
 
                 var huge = new byte[4096];
                 JpegBytes.CopyTo(huge, 0);
-                var service = CreateService(db, mediaPath, maxBytes: 2048);
+                var (service, _) = CreateService(db, mediaPath, maxBytes: 2048);
                 var dto = new UserUpdateDataDto
                 {
                     ProfileImage = CreateFormFile("huge.jpg", huge)
@@ -289,7 +314,7 @@ namespace StreamPlatformBackend.Tests
                 .Setup(r => r.RevokeAllExceptAsync(11, "keep-refresh", It.IsAny<CancellationToken>()))
                 .Returns(Task.CompletedTask);
 
-            var service = CreateService(db, mediaPath, passwordHasher: hasher.Object, refreshTokens: refresh.Object);
+            var (service, _) = CreateService(db, mediaPath, passwordHasher: hasher.Object, refreshTokens: refresh.Object);
             await service.UpdateUserProfileAsync(
                 11,
                 new UserUpdateDataDto { CurrentPassword = "old-pass", NewPassword = "new-pass-123" },
@@ -320,12 +345,42 @@ namespace StreamPlatformBackend.Tests
             });
             await db.SaveChangesAsync();
 
-            var service = CreateService(db, mediaPath);
+            var (service, streams) = CreateService(db, mediaPath);
             var key = await service.RegenerateStreamKeyAsync(99);
 
             Assert.StartsWith("live_99_", key);
             Assert.NotEqual("live_99_old", key);
             Assert.Equal(key, (await db.Users.SingleAsync(u => u.Id == 99)).StreamKey);
+            streams.Verify(
+                s => s.ForceTerminateActiveStreamAsync(99, "stream_key_rotated"),
+                Times.Once);
+        }
+
+        [Fact]
+        public async Task RegenerateStreamKeyAsync_ShouldFailClosed_WhenTerminateThrows()
+        {
+            var mediaPath = Path.Combine(Path.GetTempPath(), $"media_{Guid.NewGuid():N}");
+            await using var db = new AppDbContext(CreateDbOptions());
+            db.Users.Add(new UserModel
+            {
+                Id = 100,
+                Email = "fail@example.com",
+                Nickname = "failkey",
+                Role = UserRole.User,
+                PasswordHash = "hash",
+                StreamKey = "live_100_old"
+            });
+            await db.SaveChangesAsync();
+
+            var (service, _) = CreateService(
+                db,
+                mediaPath,
+                terminateException: new InvalidOperationException("kill failed"));
+
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                service.RegenerateStreamKeyAsync(100));
+            Assert.Contains("завершить активный эфир", ex.Message, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal("live_100_old", (await db.Users.SingleAsync(u => u.Id == 100)).StreamKey);
         }
 
         [Fact]
@@ -343,7 +398,7 @@ namespace StreamPlatformBackend.Tests
             });
             await db.SaveChangesAsync();
 
-            var service = CreateService(db, mediaPath);
+            var (service, _) = CreateService(db, mediaPath);
             var file = CreateFormFile("preview.bmp", JpegBytes);
 
             await Assert.ThrowsAsync<ArgumentException>(() =>

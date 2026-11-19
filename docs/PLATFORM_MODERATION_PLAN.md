@@ -19,18 +19,19 @@
 
 | Роль | Зона |
 |------|------|
-| `Support` | тикеты, просмотр, сброс stream key (с аудитом), **без** банов |
-| `Moderator` | platform T&S: репорты, mute/ban, end stream, hide channel |
-| `Admin` / `SuperAdmin` | роли, перманент, полный доступ |
+| `Support` / `SupportLead` | тикеты; **без** банов. Lead — слот руководителя отдела (права пока = Support) |
+| `Safety` / `SafetyLead` | platform T&S: репорты, mute/ban, апелляции. Lead — слот руководителя (права пока = Safety) |
+| `Admin` | staff-операции; назначает User / Support* / Safety* |
+| `Owner` | полный контроль; единственный назначает Admin / Owner |
 
-`Moderator` здесь = platform moderator (не путать с `StreamModerator` команды канала).
+`Safety` ≠ мод канала (`StreamModerator` / chat `Moderator`). Legacy: `Moderator`→`Safety`, `SuperAdmin`→`Owner`.
 
 ---
 
 ## Фаза 0 — фундамент
 
 - [x] JWT: роль в `ClaimTypes.Role` (чтобы работал `IsInRole` / `[Authorize(Roles=...)]`)
-- [x] Staff-роли: `Support`, `Moderator`, `Admin`, `SuperAdmin` + helper прав
+- [x] Staff-роли: `Support`/`SupportLead`, `Safety`/`SafetyLead`, `Admin`, `Owner` + helper прав
 - [x] Закрыть `/api/staff/*` авторизацией staff
 - [x] `StaffAuditLog` + сервис записи аудита
 - [x] Минимальный staff endpoint (`GET /api/staff/me`)
@@ -47,7 +48,7 @@
 
 **Критерий:** ручной mute/ban реально блокирует действие.
 
-API (Moderator+):
+API (Safety+):
 
 - `GET /api/staff/sanctions` — активные
 - `GET /api/staff/sanctions/user/{userId}`
@@ -71,7 +72,7 @@ API (Moderator+):
 API:
 
 - `POST /api/reports` — любой авторизованный
-- `GET /api/staff/reports?status=` — Moderator+
+- `GET /api/staff/reports?status=` — Safety+
 - `PUT /api/staff/reports/{id}` — статус / резолюция / опциональная санкция
 
 UI:
@@ -133,7 +134,7 @@ UI: `/staff/users`, `/staff/audit`; просроченные жалобы/тик
 API:
 
 - `GET /api/me/sanctions`, `GET/POST /api/me/appeals` — пользователь
-- `GET/PUT /api/staff/appeals` — Moderator+
+- `GET/PUT /api/staff/appeals` — Safety+
 - `GET /api/staff/stats` — все staff
 
 UI: Настройки → Апелляции; `/staff/appeals`.
@@ -159,4 +160,4 @@ UI: Настройки → Апелляции; `/staff/appeals`.
 Фаза 0 закоммичена: backend `a6b1514`.
 Миграция `Add_StaffAuditLog` применена к БД.
 Чтобы эндпоинты заработали на сервере: `sudo systemctl restart streamplatform-backend`.
-Для проверки `GET /api/staff/me` нужен пользователь с `Role` = `Support|Moderator|Admin|SuperAdmin` и **новый логин** (свежий JWT).
+Для проверки `GET /api/staff/me` нужен пользователь с `Role` = `Support|SupportLead|Safety|SafetyLead|Admin|Owner` и **новый логин** (свежий JWT).

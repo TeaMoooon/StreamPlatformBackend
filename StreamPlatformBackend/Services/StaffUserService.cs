@@ -18,15 +18,18 @@ namespace StreamPlatformBackend.Services
     {
         private readonly AppDbContext _context;
         private readonly IStaffAuditService _audit;
+        private readonly IRefreshTokenService _refreshTokens;
         private readonly ILogger<StaffUserService> _logger;
 
         public StaffUserService(
             AppDbContext context,
             IStaffAuditService audit,
+            IRefreshTokenService refreshTokens,
             ILogger<StaffUserService> logger)
         {
             _context = context;
             _audit = audit;
+            _refreshTokens = refreshTokens;
             _logger = logger;
         }
 
@@ -122,7 +125,14 @@ namespace StreamPlatformBackend.Services
             int targetUserId,
             string newRole)
         {
-            actorRole = UserRole.Normalize(actorRole);
+            // Prefer DB role over JWT claim so a demoted admin cannot keep promoting peers
+            // until access-token expiry.
+            var actorDbRole = await _context.Users.AsNoTracking()
+                .Where(u => u.Id == actorUserId)
+                .Select(u => u.Role)
+                .FirstOrDefaultAsync();
+            actorRole = UserRole.Normalize(actorDbRole ?? actorRole);
+
             if (!UserRole.CanManageStaffRoles(actorRole))
                 return (null, "Недостаточно прав для смены роли");
 
@@ -158,6 +168,23 @@ namespace StreamPlatformBackend.Services
 
             target.Role = newRole;
             await _context.SaveChangesAsync();
+
+            // Fail-closed: access JWTs stay usable until sid revoke. If revoke fails, roll
+            // the role back so a demoted admin cannot keep StaffAdmin until token expiry.
+            try
+            {
+                await _refreshTokens.RevokeAllForUserAsync(targetUserId);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "Failed to revoke sessions after role change for user {TargetUserId} — reverting role",
+                    targetUserId);
+                target.Role = oldRole;
+                await _context.SaveChangesAsync();
+                return (null, "Не удалось сбросить сессии после смены роли. Роль не изменена.");
+            }
 
             await _audit.WriteAsync(
                 actorUserId,

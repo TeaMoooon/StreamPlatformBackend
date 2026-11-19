@@ -36,11 +36,13 @@ public class StreamCallbackController : ControllerBase
             if (authFailure != null)
                 return authFailure;
 
-            var streamKey = await ReadStreamKeyFromCallbackAsync();
+            var (streamKey, publisherIp) = await ReadPublishCallbackAsync();
             if (string.IsNullOrEmpty(streamKey))
                 return BadRequest("Stream key is required");
 
-            _logger.LogInformation("=== STREAM START CALLBACK === streamKey={Key}", streamKey);
+            _logger.LogInformation(
+                "=== STREAM START CALLBACK === streamKey={Key} addr={Addr}",
+                streamKey, publisherIp ?? "-");
 
             if (!TryParseUserIdFromStreamKey(streamKey, out int userId))
                 return BadRequest("Invalid stream key format");
@@ -53,7 +55,7 @@ public class StreamCallbackController : ControllerBase
             if (string.IsNullOrEmpty(userStreamKey) || !string.Equals(userStreamKey, streamKey, StringComparison.Ordinal))
                 return Unauthorized("Invalid stream key");
 
-            await _streamService.StartStreamAsync(userId, streamKey);
+            await _streamService.StartStreamAsync(userId, streamKey, publisherIp);
             return Ok();
         }
         catch (UnauthorizedAccessException ex)
@@ -84,7 +86,7 @@ public class StreamCallbackController : ControllerBase
             if (authFailure != null)
                 return authFailure;
 
-            var streamKey = await ReadStreamKeyFromCallbackAsync();
+            var (streamKey, _) = await ReadPublishCallbackAsync();
 
             _logger.LogInformation("=== STREAM END CALLBACK === streamKey={Key}", streamKey);
             if (string.IsNullOrEmpty(streamKey))
@@ -140,19 +142,8 @@ public class StreamCallbackController : ControllerBase
 
         var provided = RtmpCallbackAuth.ReadProvidedSecret(Request);
 
-        // Migration fallback: old nginx-rtmp configs still pass ?secret= on loopback.
-        // Prefer X-Rtmp-Secret via 127.0.0.1:5155 proxy; query auth is loopback-only
-        // so the value is not accepted from the public network.
-        if (provided == null &&
-            Request.Query.TryGetValue("secret", out var querySecret) &&
-            RtmpCallbackAuth.IsLoopback(Request) &&
-            !string.IsNullOrEmpty(querySecret.ToString()))
-        {
-            _logger.LogWarning(
-                "RTMP callback used query-string secret from loopback; migrate on_publish to http://127.0.0.1:5155/rtmp/on_publish");
-            provided = querySecret.ToString();
-        }
-
+        // Header only (X-Rtmp-Secret). nginx injects it via 127.0.0.1:5155 proxy —
+        // query-string ?secret= is no longer accepted (even from loopback).
         if (!RtmpCallbackAuth.SecretsMatch(_rtmpSecret, provided))
             return Unauthorized("Invalid secret");
 
@@ -169,9 +160,9 @@ public class StreamCallbackController : ControllerBase
     }
 
     /// <summary>
-    /// nginx-rtmp: form field <c>name</c>. SRS: JSON field <c>stream</c>.
+    /// nginx-rtmp: form <c>name</c> + <c>addr</c>. SRS: JSON <c>stream</c> (+ optional <c>ip</c>).
     /// </summary>
-    private async Task<string?> ReadStreamKeyFromCallbackAsync()
+    private async Task<(string? streamKey, string? publisherIp)> ReadPublishCallbackAsync()
     {
         if (Request.HasFormContentType)
         {
@@ -179,12 +170,13 @@ public class StreamCallbackController : ControllerBase
             {
                 var form = await Request.ReadFormAsync();
                 var name = form["name"].ToString();
+                var addr = form["addr"].ToString();
                 if (!string.IsNullOrEmpty(name))
-                    return NormalizeStreamKey(name);
+                    return (NormalizeStreamKey(name), string.IsNullOrWhiteSpace(addr) ? null : addr.Trim());
             }
             catch (Exception ex) when (ex is InvalidDataException or IOException)
             {
-                return null;
+                return (null, null);
             }
         }
 
@@ -193,23 +185,36 @@ public class StreamCallbackController : ControllerBase
             try
             {
                 using var doc = await JsonDocument.ParseAsync(Request.Body);
-                if (doc.RootElement.TryGetProperty("stream", out var streamEl))
+                string? key = null;
+                string? ip = null;
+                if (doc.RootElement.TryGetProperty("stream", out var streamEl) &&
+                    streamEl.ValueKind == JsonValueKind.String)
                 {
-                    if (streamEl.ValueKind != JsonValueKind.String)
-                        return null;
-
-                    return NormalizeStreamKey(streamEl.GetString());
+                    key = NormalizeStreamKey(streamEl.GetString());
                 }
+
+                if (doc.RootElement.TryGetProperty("ip", out var ipEl) &&
+                    ipEl.ValueKind == JsonValueKind.String)
+                {
+                    ip = ipEl.GetString()?.Trim();
+                }
+                else if (doc.RootElement.TryGetProperty("addr", out var addrEl) &&
+                         addrEl.ValueKind == JsonValueKind.String)
+                {
+                    ip = addrEl.GetString()?.Trim();
+                }
+
+                return (key, string.IsNullOrWhiteSpace(ip) ? null : ip);
             }
             catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException)
             {
                 // Адверсиальные/битые payload'ы должны давать корректный 400,
                 // а не приводить к 500 из-за необработанного исключения.
-                return null;
+                return (null, null);
             }
         }
 
-        return null;
+        return (null, null);
     }
 
     private static string? NormalizeStreamKey(string? raw)

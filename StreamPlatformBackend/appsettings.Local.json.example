@@ -28,6 +28,7 @@
   },
   "Rtmp": {
     "Secret": "CHANGE_ME_MATCH_NGINX_NOTIFY_SECRET",
-    "PublishUrl": "rtmp://localhost/live"
+    "PublishUrl": "rtmp://localhost/live",
+    "DropPublisherUrl": "http://127.0.0.1:5155/control/drop/publisher?app=live&name={0}"
   }
 }

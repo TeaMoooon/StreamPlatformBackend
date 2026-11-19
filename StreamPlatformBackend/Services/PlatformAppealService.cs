@@ -118,7 +118,10 @@ namespace StreamPlatformBackend.Services
             if (!string.IsNullOrWhiteSpace(status))
             {
                 var s = status.Trim().ToLowerInvariant();
-                if (AppealStatuses.IsKnown(s))
+                // Staff "Открытые" = open + in_review (queue), not only status==open.
+                if (s == AppealStatuses.Open)
+                    query = query.Where(a => AppealStatuses.OpenLike.Contains(a.Status));
+                else if (AppealStatuses.IsKnown(s))
                     query = query.Where(a => a.Status == s);
             }
 

@@ -12,6 +12,14 @@ namespace StreamPlatformBackend.DTO.StaffDTO
         public string? Details { get; set; }
     }
 
+    /// <summary>Public ack for POST /api/reports — never includes co-reporters or staff fields.</summary>
+    public class CreatePlatformReportAckDto
+    {
+        public long Id { get; set; }
+        public string Status { get; set; } = string.Empty;
+        public int ReporterCount { get; set; }
+    }
+
     public class UpdatePlatformReportDto
     {
         public string? Status { get; set; }

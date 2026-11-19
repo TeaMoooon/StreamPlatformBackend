@@ -178,5 +178,161 @@ namespace StreamPlatformBackend.Tests
             Assert.NotNull(refreshedUser.CurrentStream);
             Assert.Null(refreshedStream.EndedAt);
         }
+
+        [Fact]
+        public async Task StartStream_ShouldRejectSecondPublisher_WhileLiveNotWaitingReconnect()
+        {
+            var dbOptions = new DbContextOptionsBuilder<AppDbContext>()
+                .UseInMemoryDatabase($"db_{Guid.NewGuid():N}")
+                .ConfigureWarnings(w => w.Ignore(
+                    Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning))
+                .Options;
+
+            await using var db = new AppDbContext(dbOptions);
+            db.Users.Add(new UserModel
+            {
+                Id = 7,
+                Email = "a@example.com",
+                Nickname = "live",
+                Role = UserRole.User,
+                PasswordHash = "x",
+                StreamKey = "live_7_key"
+            });
+            await db.SaveChangesAsync();
+
+            var services = new ServiceCollection();
+            services.AddSingleton(Mock.Of<IStreamLiveNotifier>());
+            services.AddSingleton(Mock.Of<ICatalogCache>());
+            var provider = services.BuildServiceProvider();
+
+            var sanctions = new Mock<IPlatformSanctionService>(MockBehavior.Strict);
+            sanctions.Setup(s => s.BlocksStreamingAsync(7)).ReturnsAsync(false);
+
+            var sender = new Mock<INotificationSender>(MockBehavior.Loose);
+            var service = new StreamService(
+                db,
+                Mock.Of<INotificationRepository>(),
+                sender.Object,
+                NullLogger<StreamService>.Instance,
+                provider.GetRequiredService<IServiceScopeFactory>(),
+                Mock.Of<IStreamLiveNotifier>(),
+                sanctions.Object,
+                Mock.Of<ICatalogCache>());
+
+            var first = await service.StartStreamAsync(7, "live_7_key", "203.0.113.10");
+            Assert.Equal("203.0.113.10", first.PublisherIp);
+            Assert.Equal("203.0.113.10", first.LastPublisherIp);
+
+            var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                service.StartStreamAsync(7, "live_7_key", "198.51.100.20"));
+            Assert.Contains("already live", ex.Message, StringComparison.OrdinalIgnoreCase);
+
+            await service.EndStreamAsync(7, "live_7_key");
+
+            // Soft IP anchor: different IP during WaitingReconnect is rejected.
+            var hijack = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                service.StartStreamAsync(7, "live_7_key", "198.51.100.20"));
+            Assert.Contains("different IP", hijack.Message, StringComparison.OrdinalIgnoreCase);
+
+            var resumed = await service.StartStreamAsync(7, "live_7_key", "203.0.113.10");
+            Assert.Equal(first.Id, resumed.Id);
+            Assert.Equal("203.0.113.10", resumed.PublisherIp);
+            Assert.Equal("203.0.113.10", resumed.LastPublisherIp);
+        }
+
+        [Fact]
+        public async Task StartStream_ShouldAllowReconnect_WhenIncomingIpMissing()
+        {
+            var dbOptions = new DbContextOptionsBuilder<AppDbContext>()
+                .UseInMemoryDatabase($"db_{Guid.NewGuid():N}")
+                .ConfigureWarnings(w => w.Ignore(
+                    Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning))
+                .Options;
+
+            await using var db = new AppDbContext(dbOptions);
+            db.Users.Add(new UserModel
+            {
+                Id = 8,
+                Email = "b@example.com",
+                Nickname = "live2",
+                Role = UserRole.User,
+                PasswordHash = "x",
+                StreamKey = "live_8_key"
+            });
+            await db.SaveChangesAsync();
+
+            var services = new ServiceCollection();
+            services.AddSingleton(Mock.Of<IStreamLiveNotifier>());
+            services.AddSingleton(Mock.Of<ICatalogCache>());
+            var provider = services.BuildServiceProvider();
+
+            var sanctions = new Mock<IPlatformSanctionService>(MockBehavior.Strict);
+            sanctions.Setup(s => s.BlocksStreamingAsync(8)).ReturnsAsync(false);
+
+            var service = new StreamService(
+                db,
+                Mock.Of<INotificationRepository>(),
+                Mock.Of<INotificationSender>(),
+                NullLogger<StreamService>.Instance,
+                provider.GetRequiredService<IServiceScopeFactory>(),
+                Mock.Of<IStreamLiveNotifier>(),
+                sanctions.Object,
+                Mock.Of<ICatalogCache>());
+
+            await service.StartStreamAsync(8, "live_8_key", "203.0.113.10");
+            await service.EndStreamAsync(8, "live_8_key");
+
+            // Callback without addr must not hard-fail reconnect.
+            var resumed = await service.StartStreamAsync(8, "live_8_key", publisherIp: null);
+            Assert.Equal("203.0.113.10", resumed.PublisherIp);
+            Assert.False(resumed.WaitingReconnect);
+        }
+
+        [Fact]
+        public async Task ForceTerminate_ShouldInvokeRtmpDrop()
+        {
+            var dbOptions = new DbContextOptionsBuilder<AppDbContext>()
+                .UseInMemoryDatabase($"db_{Guid.NewGuid():N}")
+                .ConfigureWarnings(w => w.Ignore(
+                    Microsoft.EntityFrameworkCore.Diagnostics.InMemoryEventId.TransactionIgnoredWarning))
+                .Options;
+
+            await using var db = new AppDbContext(dbOptions);
+            db.Users.Add(new UserModel
+            {
+                Id = 9,
+                Email = "c@example.com",
+                Nickname = "dropme",
+                Role = UserRole.User,
+                PasswordHash = "x",
+                StreamKey = "live_9_key"
+            });
+            await db.SaveChangesAsync();
+
+            var services = new ServiceCollection();
+            var provider = services.BuildServiceProvider();
+
+            var sanctions = new Mock<IPlatformSanctionService>(MockBehavior.Strict);
+            sanctions.Setup(s => s.BlocksStreamingAsync(9)).ReturnsAsync(false);
+
+            var rtmp = new Mock<IRtmpPublisherControl>(MockBehavior.Strict);
+            rtmp.Setup(r => r.TryDropPublisherAsync("live_9_key", It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+
+            var service = new StreamService(
+                db,
+                Mock.Of<INotificationRepository>(),
+                Mock.Of<INotificationSender>(),
+                NullLogger<StreamService>.Instance,
+                provider.GetRequiredService<IServiceScopeFactory>(),
+                Mock.Of<IStreamLiveNotifier>(),
+                sanctions.Object,
+                Mock.Of<ICatalogCache>(),
+                rtmp.Object);
+
+            await service.StartStreamAsync(9, "live_9_key", "203.0.113.50");
+            Assert.True(await service.ForceTerminateActiveStreamAsync(9, "test"));
+            rtmp.Verify(r => r.TryDropPublisherAsync("live_9_key", It.IsAny<CancellationToken>()), Times.Once);
+        }
     }
 }

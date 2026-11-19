@@ -173,7 +173,10 @@ namespace StreamPlatformBackend.Services
             if (!string.IsNullOrWhiteSpace(status))
             {
                 var normalized = status.Trim().ToLowerInvariant();
-                if (TicketStatuses.IsKnown(normalized))
+                // Staff "Открытые" = open queue (open + in_progress + waiting_user), like reports.
+                if (normalized == TicketStatuses.Open)
+                    query = query.Where(t => TicketStatuses.IsOpenLike(t.Status));
+                else if (TicketStatuses.IsKnown(normalized))
                     query = query.Where(t => t.Status == normalized);
             }
 
@@ -277,7 +280,8 @@ namespace StreamPlatformBackend.Services
                 var details = string.IsNullOrWhiteSpace(dto.EscalateDetails)
                     ? ticket.Messages.OrderBy(m => m.CreatedAt).FirstOrDefault()?.Body
                     : dto.EscalateDetails.Trim();
-                var (ok, err) = await EscalateInternalAsync(ticket, staffUserId, reason, details);
+                var (ok, err) = await EscalateInternalAsync(
+                    ticket, staffUserId, reason, details, dto.EscalateTargetUserId);
                 if (!ok) return (null, err);
             }
 
@@ -327,57 +331,32 @@ namespace StreamPlatformBackend.Services
             SupportTicket ticket,
             int actorUserId,
             string reason,
-            string? details)
+            string? details,
+            int? escalateTargetUserId)
         {
             if (ticket.EscalatedReportId != null)
                 return (true, null);
 
+            if (escalateTargetUserId is null or <= 0)
+                return (false, "Укажите пользователя, на которого открываем жалобу (не автора тикета)");
+
+            if (escalateTargetUserId.Value == ticket.UserId)
+                return (false, "Жалоба не должна целиться в автора тикета — укажите нарушителя");
+
             if (!ReportReasons.IsKnown(reason))
                 reason = ReportReasons.Other;
+
+            var detailsText = $"Эскалация из тикета #{ticket.Id} (автор тикета #{ticket.UserId}): {details}".Trim();
+            if (detailsText.Length > 500)
+                detailsText = detailsText[..500];
 
             var (report, error) = await _reports.CreateAsync(actorUserId, new CreatePlatformReportDto
             {
                 TargetType = ReportTargetTypes.User,
-                TargetUserId = ticket.UserId,
+                TargetUserId = escalateTargetUserId.Value,
                 Reason = reason,
-                Details = $"Эскалация из тикета #{ticket.Id}: {details}".Trim()
+                Details = detailsText
             });
-
-            // CreateAsync rejects self-report. Staff escalating about the ticket owner is fine;
-            // but if user created abuse ticket about themselves this fails. For abuse tickets from users,
-            // create report with a synthetic approach - use first staff as? Better: create report as system via direct insert.
-
-            if (error != null && error.Contains("на себя"))
-            {
-                // User filed abuse about themselves / can't report self — create report targeting unknown with details only
-                // Instead store report against no target? Required for user reports. Create with TargetUserId null for channel? 
-                // For abuse ticket from user, escalate without targetUser self: treat as message-less user report with details only
-                // Change: allow report without target for abuse escalation from ticket by inserting directly.
-                var reportEntity = new PlatformReport
-                {
-                    ReporterUserId = actorUserId,
-                    TargetType = ReportTargetTypes.User,
-                    TargetUserId = null,
-                    Reason = reason,
-                    Details = $"Тикет #{ticket.Id} ({ticket.Subject}): {details}".Trim(),
-                    Status = ReportStatuses.New,
-                    CreatedAt = DateTime.UtcNow,
-                    UpdatedAt = DateTime.UtcNow
-                };
-                _context.PlatformReports.Add(reportEntity);
-                await _context.SaveChangesAsync();
-                _context.PlatformReportReporters.Add(new PlatformReportReporter
-                {
-                    ReportId = reportEntity.Id,
-                    ReporterUserId = actorUserId,
-                    Details = reportEntity.Details,
-                    CreatedAt = reportEntity.CreatedAt
-                });
-                await _context.SaveChangesAsync();
-                ticket.EscalatedReportId = reportEntity.Id;
-                ticket.Category = TicketCategories.Abuse;
-                return (true, null);
-            }
 
             if (error != null)
                 return (false, error);

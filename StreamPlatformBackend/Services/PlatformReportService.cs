@@ -1,8 +1,11 @@
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using StreamPlatformBackend.Constants;
 using StreamPlatformBackend.Data;
 using StreamPlatformBackend.DTO.StaffDTO;
 using StreamPlatformBackend.Models.Staff;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace StreamPlatformBackend.Services
 {
@@ -105,69 +108,108 @@ namespace StreamPlatformBackend.Services
             if (recentCount >= MaxReportsPerHour)
                 return (null, "Слишком много жалоб. Попробуйте позже");
 
-            var existingCase = await FindOpenCaseAsync(targetType, reason, targetUserId, streamId, messageId);
+            // Serialize create/attach for the same case fingerprint so parallel submits
+            // cannot open duplicate open cases or 500 on the unique reporter index.
+            await using var tx = await _context.Database.BeginTransactionAsync();
+            var lockKey = CaseLockKey(targetType, reason, targetUserId, streamId, messageId);
+            await _context.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT pg_advisory_xact_lock({lockKey})");
 
-            if (existingCase != null)
+            try
             {
-                var alreadyJoined = await _context.PlatformReportReporters.AnyAsync(r =>
-                    r.ReportId == existingCase.Id && r.ReporterUserId == reporterUserId);
-                if (alreadyJoined)
-                    return (null, "Вы уже отправляли похожую жалобу по этому случаю");
+                var existingCase = await FindOpenCaseAsync(targetType, reason, targetUserId, streamId, messageId);
 
+                if (existingCase != null)
+                {
+                    var alreadyJoined = await _context.PlatformReportReporters.AnyAsync(r =>
+                        r.ReportId == existingCase.Id && r.ReporterUserId == reporterUserId);
+                    if (alreadyJoined)
+                    {
+                        await tx.RollbackAsync();
+                        return (null, "Вы уже отправляли похожую жалобу по этому случаю");
+                    }
+
+                    _context.PlatformReportReporters.Add(new PlatformReportReporter
+                    {
+                        ReportId = existingCase.Id,
+                        ReporterUserId = reporterUserId,
+                        Details = details,
+                        CreatedAt = DateTime.UtcNow
+                    });
+
+                    existingCase.UpdatedAt = DateTime.UtcNow;
+                    if (string.IsNullOrEmpty(existingCase.MessageSnapshot) && !string.IsNullOrEmpty(messageSnapshot))
+                        existingCase.MessageSnapshot = messageSnapshot;
+
+                    try
+                    {
+                        await _context.SaveChangesAsync();
+                    }
+                    catch (DbUpdateException ex) when (IsUniqueViolation(ex))
+                    {
+                        await tx.RollbackAsync();
+                        return (null, "Вы уже отправляли похожую жалобу по этому случаю");
+                    }
+
+                    await tx.CommitAsync();
+
+                    _logger.LogInformation(
+                        "Report case {ReportId} +1 reporter {ReporterId} (now attached)",
+                        existingCase.Id, reporterUserId);
+
+                    return (await MapAsync(existingCase.Id), null);
+                }
+
+                var now = DateTime.UtcNow;
+                var report = new PlatformReport
+                {
+                    ReporterUserId = reporterUserId,
+                    TargetType = targetType,
+                    TargetUserId = targetUserId,
+                    MessageId = messageId,
+                    MessageSnapshot = messageSnapshot,
+                    StreamerId = streamerId,
+                    StreamId = streamId,
+                    Reason = reason,
+                    Details = details,
+                    Status = ReportStatuses.New,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                };
+
+                // Single SaveChanges: case + first reporter (no orphan case without reporter).
+                _context.PlatformReports.Add(report);
                 _context.PlatformReportReporters.Add(new PlatformReportReporter
                 {
-                    ReportId = existingCase.Id,
+                    Report = report,
                     ReporterUserId = reporterUserId,
                     Details = details,
-                    CreatedAt = DateTime.UtcNow
+                    CreatedAt = now
                 });
 
-                existingCase.UpdatedAt = DateTime.UtcNow;
-                if (string.IsNullOrEmpty(existingCase.MessageSnapshot) && !string.IsNullOrEmpty(messageSnapshot))
-                    existingCase.MessageSnapshot = messageSnapshot;
+                try
+                {
+                    await _context.SaveChangesAsync();
+                }
+                catch (DbUpdateException ex) when (IsUniqueViolation(ex))
+                {
+                    await tx.RollbackAsync();
+                    return (null, "Вы уже отправляли похожую жалобу по этому случаю");
+                }
 
-                await _context.SaveChangesAsync();
+                await tx.CommitAsync();
 
                 _logger.LogInformation(
-                    "Report case {ReportId} +1 reporter {ReporterId} (now attached)",
-                    existingCase.Id, reporterUserId);
+                    "Report case {ReportId} opened by {ReporterId} type={Type} target={TargetUserId}",
+                    report.Id, reporterUserId, targetType, targetUserId);
 
-                return (await MapAsync(existingCase.Id), null);
+                return (await MapAsync(report.Id), null);
             }
-
-            var report = new PlatformReport
+            catch
             {
-                ReporterUserId = reporterUserId,
-                TargetType = targetType,
-                TargetUserId = targetUserId,
-                MessageId = messageId,
-                MessageSnapshot = messageSnapshot,
-                StreamerId = streamerId,
-                StreamId = streamId,
-                Reason = reason,
-                Details = details,
-                Status = ReportStatuses.New,
-                CreatedAt = DateTime.UtcNow,
-                UpdatedAt = DateTime.UtcNow
-            };
-
-            _context.PlatformReports.Add(report);
-            await _context.SaveChangesAsync();
-
-            _context.PlatformReportReporters.Add(new PlatformReportReporter
-            {
-                ReportId = report.Id,
-                ReporterUserId = reporterUserId,
-                Details = details,
-                CreatedAt = report.CreatedAt
-            });
-            await _context.SaveChangesAsync();
-
-            _logger.LogInformation(
-                "Report case {ReportId} opened by {ReporterId} type={Type} target={TargetUserId}",
-                report.Id, reporterUserId, targetType, targetUserId);
-
-            return (await MapAsync(report.Id), null);
+                await tx.RollbackAsync();
+                throw;
+            }
         }
 
         public async Task<List<PlatformReportDto>> ListAsync(string? status = null, int take = 50)
@@ -248,21 +290,40 @@ namespace StreamPlatformBackend.Services
                 if (dto.Sanction.TargetUserId <= 0)
                     return (null, "Нельзя выдать санкцию без целевого пользователя");
 
-                var (sanction, sanctionError) = await _sanctions.IssueAsync(actorUserId, dto.Sanction);
-                if (sanctionError != null)
-                    return (null, sanctionError);
-
-                report.LinkedSanctionId = sanction?.Id;
-                if (report.Status is ReportStatuses.New or ReportStatuses.InProgress)
+                // Same DbContext: keep sanction insert + LinkedSanctionId in one transaction.
+                await using var tx = await _context.Database.BeginTransactionAsync();
+                try
                 {
-                    report.Status = ReportStatuses.Resolved;
-                    report.ResolvedAt = DateTime.UtcNow;
-                    report.AssigneeUserId ??= actorUserId;
+                    var (sanction, sanctionError) = await _sanctions.IssueAsync(actorUserId, dto.Sanction);
+                    if (sanctionError != null)
+                    {
+                        await tx.RollbackAsync();
+                        return (null, sanctionError);
+                    }
+
+                    report.LinkedSanctionId = sanction?.Id;
+                    if (report.Status is ReportStatuses.New or ReportStatuses.InProgress)
+                    {
+                        report.Status = ReportStatuses.Resolved;
+                        report.ResolvedAt = DateTime.UtcNow;
+                        report.AssigneeUserId ??= actorUserId;
+                    }
+
+                    report.UpdatedAt = DateTime.UtcNow;
+                    await _context.SaveChangesAsync();
+                    await tx.CommitAsync();
+                }
+                catch
+                {
+                    await tx.RollbackAsync();
+                    throw;
                 }
             }
-
-            report.UpdatedAt = DateTime.UtcNow;
-            await _context.SaveChangesAsync();
+            else
+            {
+                report.UpdatedAt = DateTime.UtcNow;
+                await _context.SaveChangesAsync();
+            }
 
             if (report.Status is ReportStatuses.Resolved or ReportStatuses.Rejected)
             {
@@ -277,6 +338,21 @@ namespace StreamPlatformBackend.Services
 
             return (await MapAsync(report.Id), null);
         }
+
+        private static long CaseLockKey(
+            string targetType,
+            string reason,
+            int? targetUserId,
+            int? streamId,
+            string? messageId)
+        {
+            var raw = $"{targetType}|{reason}|{targetUserId?.ToString() ?? "-"}|{streamId?.ToString() ?? "-"}|{messageId ?? ""}";
+            var hash = SHA256.HashData(Encoding.UTF8.GetBytes(raw));
+            return BitConverter.ToInt64(hash, 0);
+        }
+
+        private static bool IsUniqueViolation(DbUpdateException ex) =>
+            ex.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation };
 
         private async Task<PlatformReport?> FindOpenCaseAsync(
             string targetType,

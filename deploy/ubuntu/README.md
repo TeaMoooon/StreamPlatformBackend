@@ -41,7 +41,18 @@ sudo bash /var/www/StreamPlatformBackend/deploy/ubuntu/apply-rtmp-callback-auth.
 sudo bash /var/www/StreamPlatformBackend/deploy/ubuntu/sync-rtmp-secret-from-local.sh
 ```
 
-До применения прокси API ещё принимает `?secret=` **только с loopback** (миграция).
+Query `?secret=` больше не принимается API — только заголовок `X-Rtmp-Secret` через прокси `:5155`.
+
+На том же `127.0.0.1:5155` есть `location /control` (`rtmp_control`) — бэкенд дергает
+`Rtmp:DropPublisherUrl` при force-terminate / смене ключа, чтобы сбросить живой RTMP publisher.
+
+После обновления шаблона nginx:
+
+```bash
+sudo cp /var/www/StreamPlatformBackend/deploy/ubuntu/nginx.conf /etc/nginx/nginx.conf
+sudo nginx -t && sudo systemctl reload nginx
+curl -s 'http://127.0.0.1:5155/control/drop/publisher?app=live&name=live_test'   # ожидается 200 и число
+```
 
 ## Логи nginx
 

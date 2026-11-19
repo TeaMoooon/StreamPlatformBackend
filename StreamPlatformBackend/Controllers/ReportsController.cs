@@ -31,7 +31,13 @@ namespace StreamPlatformBackend.Controllers
             if (error != null)
                 return BadRequest(new { message = error });
 
-            return Ok(report);
+            // Do not return staff-shaped DTO (other reporters' identities/details).
+            return Ok(new CreatePlatformReportAckDto
+            {
+                Id = report!.Id,
+                Status = report.Status,
+                ReporterCount = report.ReporterCount
+            });
         }
 
         private int GetCurrentUserId()

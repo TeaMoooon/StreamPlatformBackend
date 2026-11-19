@@ -603,6 +603,10 @@ namespace StreamPlatformBackend.Migrations
                     b.Property<DateTime?>("LastPingAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("LastPublisherIp")
+                        .HasMaxLength(45)
+                        .HasColumnType("character varying(45)");
+
                     b.Property<string>("PreviewUrl")
                         .HasColumnType("text");
 
@@ -610,6 +614,10 @@ namespace StreamPlatformBackend.Migrations
                         .IsRequired()
                         .HasMaxLength(36)
                         .HasColumnType("character varying(36)");
+
+                    b.Property<string>("PublisherIp")
+                        .HasMaxLength(45)
+                        .HasColumnType("character varying(45)");
 
                     b.Property<bool>("RecordEnabled")
                         .HasColumnType("boolean");
